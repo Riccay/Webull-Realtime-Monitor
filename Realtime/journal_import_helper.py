@@ -57,6 +57,25 @@ def setup_journal_imports():
         logger.error(f"Error setting up journal imports: {str(e)}")
         return False
 
+# Import backup manager (always available since it's in Realtime directory)
+try:
+    from journal_backup_manager import backup_journal, restore_journal, get_journal_backups, get_backup_manager
+    logger.info("Journal backup manager imported successfully")
+except ImportError as e:
+    logger.error(f"Failed to import journal backup manager: {str(e)}")
+    # Provide stub implementations
+    def backup_journal(trigger_event="manual"):
+        logger.warning("Journal backup skipped - backup manager not available")
+        return None
+    def restore_journal(backup_filepath):
+        logger.warning("Journal restore skipped - backup manager not available")
+        return False
+    def get_journal_backups():
+        logger.warning("Get backups skipped - backup manager not available")
+        return []
+    def get_backup_manager():
+        return None
+
 # Stub implementations as fallback if imports fail
 class JournalStub:
     """Stub implementation for when journal modules can't be imported"""

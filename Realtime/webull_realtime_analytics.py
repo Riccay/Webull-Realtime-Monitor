@@ -19,7 +19,7 @@ from datetime import datetime, date, timedelta
 from webull_realtime_common import logger, OUTPUT_DIR, truncate_to_minute, truncate_to_timeframe
 
 # Import journal functionality using the helper
-from journal_import_helper import get_journal_entry, save_journal_entry
+from journal_import_helper import get_journal_entry, save_journal_entry, backup_journal
 
 class WebullAnalytics:
     """Analytics engine for Webull Realtime P&L Monitor."""
@@ -1049,6 +1049,15 @@ class WebullAnalytics:
             
             if success:
                 logger.info(f"Saved journal entry for {date_str}")
+                
+                # Create a backup after successful save
+                try:
+                    backup_path = backup_journal("journal_save")
+                    if backup_path:
+                        logger.info(f"Created journal backup after save: {backup_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to create backup after journal save: {str(e)}")
+                
                 return True
             else:
                 logger.error(f"Failed to save journal entry for {date_str}")

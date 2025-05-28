@@ -25,7 +25,7 @@ import configparser
 from webull_realtime_common import logger, TRADES_DIR, CONFIG_FILE
 
 # Import journal functionality using the helper
-from journal_import_helper import save_journal_entry, get_journal_entry, get_journal_export_script
+from journal_import_helper import save_journal_entry, get_journal_entry, get_journal_export_script, get_journal_backups, restore_journal, get_backup_manager
 
 class ToolTip:
     """
@@ -1556,6 +1556,21 @@ Use Average Pricing: {"Enabled" if self.config.use_average_pricing else "Disable
             )
             header_label.pack(side=tk.LEFT)
             
+            # Add backup button to header
+            backup_button = tk.Button(
+                header_frame,
+                text="Backups",
+                font=("Segoe UI", 9),
+                background=self.config.accent_color,
+                foreground="white",
+                activebackground=self.config.accent_color,
+                activeforeground="white",
+                relief=tk.FLAT,
+                padx=10,
+                command=lambda: self.show_backup_dialog()
+            )
+            backup_button.pack(side=tk.RIGHT, padx=5, pady=5)
+            
             # Add export journal button to header
             export_button = tk.Button(
                 header_frame,
@@ -1569,7 +1584,7 @@ Use Average Pricing: {"Enabled" if self.config.use_average_pricing else "Disable
                 padx=10,
                 command=lambda: self.export_journal_entries(journal_window)
             )
-            export_button.pack(side=tk.RIGHT, padx=10, pady=5)
+            export_button.pack(side=tk.RIGHT, padx=5, pady=5)
             
             # Main content frame
             main_frame = tk.Frame(journal_window, background=self.config.background_color)
@@ -1913,6 +1928,256 @@ Use Average Pricing: {"Enabled" if self.config.use_average_pricing else "Disable
         except Exception as e:
             logger.error(f"Error exporting journal entries: {str(e)}")
             messagebox.showerror("Error", f"Failed to export journal entries: {str(e)}")
+    
+    def show_backup_dialog(self):
+        """
+        Show dialog for managing journal backups.
+        """
+        try:
+            # Create backup dialog window
+            backup_window = tk.Toplevel(self.gui.root)
+            backup_window.title("Journal Backups")
+            backup_window.geometry("700x500")
+            backup_window.resizable(True, True)
+            backup_window.transient(self.gui.root)
+            backup_window.grab_set()
+            
+            # Style the dialog
+            backup_window.config(background=self.config.background_color)
+            
+            # Create header
+            header_frame = tk.Frame(backup_window, background=self.config.primary_color, height=40)
+            header_frame.pack(fill=tk.X, padx=0, pady=0)
+            
+            header_label = tk.Label(
+                header_frame, 
+                text="Journal Backup Management",
+                font=("Segoe UI", 12, "bold"),
+                foreground="white",
+                background=self.config.primary_color,
+                padx=10,
+                pady=10
+            )
+            header_label.pack(side=tk.LEFT)
+            
+            # Create new backup button in header
+            new_backup_button = tk.Button(
+                header_frame,
+                text="Create Backup",
+                font=("Segoe UI", 9),
+                background=self.config.accent_color,
+                foreground="white",
+                activebackground=self.config.accent_color,
+                activeforeground="white",
+                relief=tk.FLAT,
+                padx=10,
+                command=lambda: self.create_manual_backup(backup_window)
+            )
+            new_backup_button.pack(side=tk.RIGHT, padx=10, pady=5)
+            
+            # Main content frame
+            main_frame = tk.Frame(backup_window, background=self.config.background_color)
+            main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+            
+            # Backup info frame
+            info_frame = tk.LabelFrame(
+                main_frame,
+                text="Backup Information",
+                font=("Segoe UI", 10, "bold"),
+                background=self.config.background_color,
+                foreground=self.config.text_color,
+                padx=10,
+                pady=10
+            )
+            info_frame.pack(fill=tk.X, pady=(0, 10))
+            
+            # Get backup status
+            backup_manager = get_backup_manager()
+            if backup_manager:
+                status = backup_manager.get_backup_status()
+                
+                info_text = f"Backup Count: {status['backup_count']} / {backup_manager.BACKUP_ROTATION_COUNT}\n"
+                info_text += f"Total Size: {status['total_size_mb']} MB\n"
+                info_text += f"Backup Directory: {status['backup_directory']}\n"
+                
+                if status['last_backup_time']:
+                    info_text += f"Last Backup: {status['last_backup_time'].strftime('%Y-%m-%d %H:%M:%S')}"
+            else:
+                info_text = "Backup manager not available"
+            
+            info_label = tk.Label(
+                info_frame,
+                text=info_text,
+                font=("Segoe UI", 9),
+                background=self.config.background_color,
+                foreground=self.config.text_color,
+                justify=tk.LEFT
+            )
+            info_label.pack(anchor=tk.W)
+            
+            # Backup list frame
+            list_frame = tk.LabelFrame(
+                main_frame,
+                text="Available Backups",
+                font=("Segoe UI", 10, "bold"),
+                background=self.config.background_color,
+                foreground=self.config.text_color,
+                padx=10,
+                pady=10
+            )
+            list_frame.pack(fill=tk.BOTH, expand=True)
+            
+            # Create treeview for backup list
+            columns = ('Date', 'Time', 'Trigger', 'Size')
+            tree = ttk.Treeview(list_frame, columns=columns, show='tree headings', height=12)
+            
+            # Define column headings
+            tree.heading('#0', text='')
+            tree.heading('Date', text='Date')
+            tree.heading('Time', text='Time')
+            tree.heading('Trigger', text='Trigger')
+            tree.heading('Size', text='Size (MB)')
+            
+            # Configure column widths
+            tree.column('#0', width=0, stretch=False)
+            tree.column('Date', width=100)
+            tree.column('Time', width=100)
+            tree.column('Trigger', width=150)
+            tree.column('Size', width=100)
+            
+            # Add scrollbar
+            scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=tree.yview)
+            tree.configure(yscrollcommand=scrollbar.set)
+            
+            # Pack tree and scrollbar
+            tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            
+            # Populate backup list
+            if backup_manager:
+                backups = backup_manager.get_available_backups()
+                for backup in backups:
+                    date_str = backup['timestamp'].strftime('%Y-%m-%d')
+                    time_str = backup['timestamp'].strftime('%H:%M:%S')
+                    trigger = backup['trigger'].replace('_', ' ').title()
+                    size_str = f"{backup['size_mb']:.2f}"
+                    
+                    tree.insert('', 'end', values=(date_str, time_str, trigger, size_str),
+                              tags=(backup['filepath'],))
+            
+            # Button frame
+            button_frame = tk.Frame(main_frame, background=self.config.background_color)
+            button_frame.pack(fill=tk.X, pady=(10, 0))
+            
+            # Restore button
+            restore_button = tk.Button(
+                button_frame,
+                text="RESTORE SELECTED",
+                font=("Segoe UI", 10, "bold"),
+                background="#FF9800",
+                foreground="white",
+                activebackground="#F57C00",
+                activeforeground="white",
+                relief=tk.RAISED,
+                borderwidth=2,
+                padx=15,
+                pady=5,
+                command=lambda: self.restore_selected_backup(tree, backup_window)
+            )
+            restore_button.pack(side=tk.RIGHT, padx=10)
+            
+            # Close button
+            close_button = self.create_modern_button(
+                button_frame,
+                "Close",
+                backup_window.destroy,
+                width=10
+            )
+            close_button.pack(side=tk.RIGHT, padx=5)
+            
+        except Exception as e:
+            logger.error(f"Error showing backup dialog: {str(e)}")
+            logger.error(traceback.format_exc())
+            messagebox.showerror("Error", f"Failed to show backup dialog: {str(e)}")
+    
+    def create_manual_backup(self, parent_window):
+        """
+        Create a manual backup of the journal database.
+        
+        Args:
+            parent_window: Parent window to refresh after backup
+        """
+        try:
+            backup_manager = get_backup_manager()
+            if not backup_manager:
+                messagebox.showerror("Error", "Backup manager not available")
+                return
+            
+            # Create backup
+            backup_path = backup_manager.create_backup("manual")
+            
+            if backup_path:
+                messagebox.showinfo("Success", f"Backup created successfully:\n{os.path.basename(backup_path)}")
+                # Refresh the backup dialog
+                parent_window.destroy()
+                self.show_backup_dialog()
+            else:
+                messagebox.showerror("Error", "Failed to create backup")
+                
+        except Exception as e:
+            logger.error(f"Error creating manual backup: {str(e)}")
+            messagebox.showerror("Error", f"Failed to create backup: {str(e)}")
+    
+    def restore_selected_backup(self, tree, parent_window):
+        """
+        Restore the selected backup from the tree view.
+        
+        Args:
+            tree: Treeview widget containing backup list
+            parent_window: Parent window to close after restore
+        """
+        try:
+            # Get selected item
+            selection = tree.selection()
+            if not selection:
+                messagebox.showwarning("No Selection", "Please select a backup to restore")
+                return
+            
+            # Get backup filepath from tags
+            item = tree.item(selection[0])
+            if not item['tags']:
+                messagebox.showerror("Error", "Could not get backup file path")
+                return
+            
+            backup_filepath = item['tags'][0]
+            values = item['values']
+            
+            # Confirm restore
+            result = messagebox.askyesno(
+                "Confirm Restore",
+                f"Are you sure you want to restore the backup from:\n\n"
+                f"Date: {values[0]}\n"
+                f"Time: {values[1]}\n"
+                f"Trigger: {values[2]}\n\n"
+                f"This will replace your current journal database!"
+            )
+            
+            if result:
+                backup_manager = get_backup_manager()
+                if not backup_manager:
+                    messagebox.showerror("Error", "Backup manager not available")
+                    return
+                
+                # Perform restore
+                if backup_manager.restore_backup(backup_filepath):
+                    messagebox.showinfo("Success", "Journal database restored successfully!\n\nPlease restart the application for changes to take effect.")
+                    parent_window.destroy()
+                else:
+                    messagebox.showerror("Error", "Failed to restore backup")
+                    
+        except Exception as e:
+            logger.error(f"Error restoring backup: {str(e)}")
+            messagebox.showerror("Error", f"Failed to restore backup: {str(e)}")
 
 # Version and metadata
 VERSION = "2.8"

@@ -19,7 +19,7 @@ from tkinter import messagebox
 from datetime import datetime
 
 # Import journal modules using the helper
-from journal_import_helper import init_journal_db, auto_import_journal_entries
+from journal_import_helper import init_journal_db, auto_import_journal_entries, backup_journal
 
 # Import component modules
 from webull_realtime_common import logger
@@ -84,6 +84,11 @@ class WebullRealtimePnL:
             # Initialize the journal database
             if init_journal_db():
                 logger.info("Journal database initialized successfully")
+                
+                # Create a startup backup
+                backup_path = backup_journal("startup")
+                if backup_path:
+                    logger.info(f"Created startup backup: {backup_path}")
             else:
                 logger.warning("Failed to initialize journal database")
             
@@ -338,6 +343,14 @@ class WebullRealtimePnL:
             
             # Save configuration
             self.config.save_config()
+            
+            # Create a shutdown backup of the journal
+            try:
+                backup_path = backup_journal("shutdown")
+                if backup_path:
+                    logger.info(f"Created shutdown backup: {backup_path}")
+            except Exception as e:
+                logger.warning(f"Failed to create shutdown backup: {str(e)}")
             
             # Destroy GUI if exists
             if self.gui and self.gui.root and self.gui.root.winfo_exists():

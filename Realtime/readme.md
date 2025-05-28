@@ -86,7 +86,19 @@ The integrated trading journal allows you to document your daily trading experie
 - `trading_journal.db` - Journal database (current format)
 - `webull_config.ini` - Application settings
 
-⚠️ **BACKUP RECOMMENDATION**: These files contain your trading history and journal entries. **Please regularly backup the entire `output` directory** to prevent data loss. Consider using cloud storage or external drives for backups.
+#### Automatic Journal Backup System (v2.1+)
+
+The application now includes an automatic backup system for your journal database:
+
+- **Automatic Backups**: Created on application startup, after each journal save, and on shutdown
+- **Backup Rotation**: Maintains the 10 most recent backups automatically
+- **Manual Backups**: Create additional backups anytime via the "Backups" button in the journal dialog
+- **Easy Restoration**: Browse and restore any backup through the backup management dialog
+- **Integrity Checks**: All backups are verified before creation and restoration
+
+**Backup Location**: `output/backups/journal/`
+
+⚠️ **ADDITIONAL BACKUP RECOMMENDATION**: While the automatic backup system protects against corruption, you should still **regularly backup the entire `output` directory** to external storage for complete data protection.
 
 ## Project Structure
 
