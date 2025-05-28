@@ -1,7 +1,7 @@
 """
-Webull Realtime P&L Monitor - Configuration Module - v1.6
+Webull Realtime P&L Monitor - Configuration Module - v2.2
 Created: 2025-05-06 15:00:00
-Last Modified: 2025-05-09 23:45:00
+Last Modified: 2025-05-23 08:15:00
 
 This module handles configuration management for the Webull Realtime P&L Monitor.
 It provides functions for loading, saving, and managing application settings.
@@ -25,18 +25,35 @@ class WebullConfig:
     def __init__(self):
         """Initialize the configuration manager."""
         # Version info
-        self.version = "1.6"
+        self.version = "2.2"
         self.created_date = "2025-05-06 15:00:00"
-        self.modified_date = "2025-05-09 23:45:00"
+        self.modified_date = "2025-05-23 08:15:00"
         
-        # Initialize core settings with default values first
-        self.scan_interval = 10
-        self.log_folder = ''
-        self.auto_start = True
-        self.minimize_to_tray = False
-        self.dark_mode = False
-        self.minute_based_avg = True  # New setting for minute-based price averaging
+        # Create config parser
+        self.config = configparser.ConfigParser()
         
+        # CRITICAL: Load config FIRST before setting any default values
+        self.load_config()
+        
+        # Now initialize attributes FROM the config
+        # This is the key fix - load from config first, then use defaults as fallback
+        self.scan_interval = self.config.getint('Settings', 'scan_interval', fallback=10)
+        self.log_folder = self.config.get('Settings', 'log_folder', fallback='')
+        self.auto_start = self._str_to_bool(self.config.get('Settings', 'auto_start', fallback='True'))
+        self.minimize_to_tray = self._str_to_bool(self.config.get('Settings', 'minimize_to_tray', fallback='False'))
+        self.dark_mode = self._str_to_bool(self.config.get('Settings', 'dark_mode', fallback='False'))
+        self.minute_based_avg = self._str_to_bool(self.config.get('Settings', 'minute_based_avg', fallback='True'))
+        self.use_average_pricing = self._str_to_bool(self.config.get('Settings', 'use_average_pricing', fallback='True'))
+        self.timeframe_minutes = self.config.getint('Settings', 'timeframe_minutes', fallback=5)
+        
+        # Log loaded values immediately after loading
+        logger.info(f"STARTUP - Settings loaded directly from {CONFIG_FILE}:")
+        logger.info(f"  - scan_interval: {self.scan_interval}")
+        logger.info(f"  - use_average_pricing: {self.use_average_pricing}")
+        logger.info(f"  - timeframe_minutes: {self.timeframe_minutes}")
+        logger.info(f"  - minute_based_avg: {self.minute_based_avg}")
+        
+        # Now initialize theme colors and UI elements
         # Theme colors - initialize default values
         self.primary_color = "#2c3e50"  # Default primary color
         self.background_color = "#ecf0f1"  # Default background color
@@ -50,23 +67,6 @@ class WebullConfig:
         # New metric color scale
         self.metric_colors = []
         self.metric_ranges = {}
-        
-        # Create config parser and load config
-        self.config = configparser.ConfigParser()
-        self.load_config()
-        
-        # Update attributes from loaded config
-        self.scan_interval = self.config.getint('Settings', 'scan_interval', fallback=10)
-        self.log_folder = self.config.get('Settings', 'log_folder', fallback='')
-        
-        # Convert to Boolean properly
-        self.auto_start = self._str_to_bool(self.config.get('Settings', 'auto_start', fallback='True'))
-        self.minimize_to_tray = self._str_to_bool(self.config.get('Settings', 'minimize_to_tray', fallback='False'))
-        self.dark_mode = self._str_to_bool(self.config.get('Settings', 'dark_mode', fallback='False'))
-        self.minute_based_avg = self._str_to_bool(self.config.get('Settings', 'minute_based_avg', fallback='True'))
-        
-        # Log actual values after conversion
-        logger.info(f"Settings loaded - auto_start: {self.auto_start}")
         
         # Load theme colors
         self.load_theme_colors()
@@ -99,30 +99,48 @@ class WebullConfig:
     def load_config(self):
         """Load application configuration from file."""
         try:
+            logger.info(f"Attempting to load config from: {CONFIG_FILE}")
+            
+            # Ensure config directory exists
+            os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
+            
             # Create default config if it doesn't exist
             if not os.path.exists(CONFIG_FILE):
-                self.create_default_config()
+                logger.info(f"Config file not found at {CONFIG_FILE}, creating default")
+                self._create_default_config()
             else:
                 # Load existing config
+                logger.info(f"Loading existing config from {CONFIG_FILE}")
                 self.config.read(CONFIG_FILE)
                 
-                # Add any missing sections/options with defaults
-                self.ensure_config_sections()
+                # Check if the existing config has the necessary sections
+                if 'Settings' not in self.config or 'LightTheme' not in self.config:
+                    logger.warning("Config file exists but missing essential sections. Will add defaults.")
+                    self._ensure_config_sections()
+                
+                # Debug output the loaded settings
+                if 'Settings' in self.config:
+                    logger.info("Loaded settings from file:")
+                    for key, value in self.config['Settings'].items():
+                        logger.info(f"  {key} = {value}")
+                else:
+                    logger.warning("No Settings section found in config file!")
                     
         except Exception as e:
             logger.error(f"Error loading configuration: {str(e)}")
+            logger.error(traceback.format_exc())
             
             # Set up minimal default configuration
-            self.create_default_config(minimal=True)
+            self._create_default_config(minimal=True)
             
-    def create_default_config(self, minimal=False):
+    def _create_default_config(self, minimal=False):
         """
         Create default configuration.
         
         Args:
             minimal (bool): Whether to create a minimal configuration
         """
-        # Settings
+        # Settings - all values are strings in the config
         self.config['Settings'] = {
             'scan_interval': '10',
             'log_folder': '',
@@ -130,6 +148,8 @@ class WebullConfig:
             'minimize_to_tray': 'False',
             'dark_mode': 'False',
             'minute_based_avg': 'True',
+            'use_average_pricing': 'True',  # Default to using average pricing
+            'timeframe_minutes': '5',  # Default time frame in minutes
             'version': self.version,
             'created_date': self.created_date,
             'modified_date': self.modified_date
@@ -176,7 +196,7 @@ class WebullConfig:
             # Save the default config
             self.save_config()
         
-    def ensure_config_sections(self):
+    def _ensure_config_sections(self):
         """Ensure all required config sections and options exist."""
         # Add any missing sections
         if 'Settings' not in self.config:
@@ -199,6 +219,8 @@ class WebullConfig:
             'minimize_to_tray': 'False',
             'dark_mode': 'False',
             'minute_based_avg': 'True',
+            'use_average_pricing': 'True',
+            'timeframe_minutes': '5',
             'version': self.version,
             'created_date': self.created_date,
             'modified_date': self.modified_date
@@ -280,6 +302,10 @@ class WebullConfig:
                 self.dark_mode = False
             if not hasattr(self, 'minute_based_avg'):
                 self.minute_based_avg = True
+            if not hasattr(self, 'use_average_pricing'):
+                self.use_average_pricing = True
+            if not hasattr(self, 'timeframe_minutes'):
+                self.timeframe_minutes = 5
                 
             # Update config with current values
             self.config['Settings']['scan_interval'] = str(self.scan_interval)
@@ -288,21 +314,63 @@ class WebullConfig:
             self.config['Settings']['minimize_to_tray'] = str(self.minimize_to_tray)
             self.config['Settings']['dark_mode'] = str(self.dark_mode)
             self.config['Settings']['minute_based_avg'] = str(self.minute_based_avg)
+            self.config['Settings']['use_average_pricing'] = str(self.use_average_pricing)
+            self.config['Settings']['timeframe_minutes'] = str(self.timeframe_minutes)
             self.config['Settings']['version'] = self.version
             self.config['Settings']['created_date'] = self.created_date
             self.config['Settings']['modified_date'] = self.modified_date
+            
+            # Log settings that are about to be saved
+            logger.info(f"Saving settings to {CONFIG_FILE}")
+            logger.info(f"Settings to save: scan_interval={self.scan_interval}, "
+                      f"use_average_pricing={self.use_average_pricing}, "
+                      f"timeframe_minutes={self.timeframe_minutes}, "
+                      f"minute_based_avg={self.minute_based_avg}, "
+                      f"auto_start={self.auto_start}")
+            
+            # Ensure config directory exists
+            os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
+            
+            # Validate config has the necessary sections before saving
+            if 'Settings' not in self.config:
+                logger.error("Settings section missing from config! Creating it.")
+                self.config['Settings'] = {}
+                self._ensure_config_sections()
             
             # Save to file
             with open(CONFIG_FILE, 'w') as configfile:
                 self.config.write(configfile)
                 
-            logger.info("Configuration saved successfully")
-            logger.debug(f"Configuration settings - auto_start: {self.auto_start}")
+            # Verify file was saved correctly
+            if os.path.exists(CONFIG_FILE):
+                file_size = os.path.getsize(CONFIG_FILE)
+                logger.info(f"Configuration saved successfully. File size: {file_size} bytes")
+                
+                # Read back and verify settings were saved correctly
+                test_config = configparser.ConfigParser()
+                test_config.read(CONFIG_FILE)
+                
+                if 'Settings' in test_config:
+                    saved_use_avg = test_config.get('Settings', 'use_average_pricing', fallback='MISSING')
+                    saved_timeframe = test_config.get('Settings', 'timeframe_minutes', fallback='MISSING')
+                    logger.info(f"Verification: use_average_pricing={saved_use_avg}, timeframe_minutes={saved_timeframe}")
+                    
+                    if saved_use_avg == 'MISSING' or saved_timeframe == 'MISSING':
+                        logger.error("Verification failed! Some settings are missing after save.")
+                else:
+                    logger.error("Verification failed! Settings section missing after save.")
+            else:
+                logger.error(f"Verification failed! Config file not found after save attempt.")
+                
+            logger.debug(f"Configuration settings - auto_start: {self.auto_start}, use_average_pricing: {self.use_average_pricing}, timeframe_minutes: {self.timeframe_minutes}")
+            
+            return True
             
         except Exception as e:
             logger.error(f"Error saving configuration: {str(e)}")
             logger.error(traceback.format_exc())
             logger.error(f"Current state - scan_interval: {getattr(self, 'scan_interval', 'N/A')}")
+            return False
             
     def load_theme_colors(self):
         """Load theme colors based on dark mode setting."""
@@ -561,39 +629,85 @@ class WebullConfig:
             # Log the incoming settings
             logger.info(f"Updating settings: {settings_dict}")
             
+            # FIX: Improve boolean conversion
+            def ensure_bool(value):
+                if isinstance(value, bool):
+                    return value
+                if isinstance(value, str):
+                    return value.lower() in ('true', 'yes', '1', 'y', 't')
+                # Integers or other non-zero values are considered True
+                return bool(value)
+                
             # Update each setting if provided
             if 'scan_interval' in settings_dict:
-                self.scan_interval = int(settings_dict['scan_interval'])
+                try:
+                    self.scan_interval = int(settings_dict['scan_interval'])
+                    logger.info(f"Set scan_interval to {self.scan_interval}")
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Invalid scan_interval value: {settings_dict['scan_interval']}")
+                    logger.warning(f"Error: {str(e)}")
+                    # Keep the current value
             
             if 'log_folder' in settings_dict:
                 self.log_folder = settings_dict['log_folder']
+                logger.info(f"Set log_folder to {self.log_folder}")
                 
             if 'auto_start' in settings_dict:
-                # Fix: Explicitly convert to boolean
-                self.auto_start = self._str_to_bool(settings_dict['auto_start'])
+                self.auto_start = ensure_bool(settings_dict['auto_start'])
+                logger.info(f"Set auto_start to {self.auto_start}")
                 
             if 'minimize_to_tray' in settings_dict:
-                # Fix: Explicitly convert to boolean
-                self.minimize_to_tray = self._str_to_bool(settings_dict['minimize_to_tray'])
+                self.minimize_to_tray = ensure_bool(settings_dict['minimize_to_tray'])
+                logger.info(f"Set minimize_to_tray to {self.minimize_to_tray}")
                 
             if 'dark_mode' in settings_dict:
                 old_dark_mode = self.dark_mode
-                # Fix: Explicitly convert to boolean
-                self.dark_mode = self._str_to_bool(settings_dict['dark_mode'])
+                self.dark_mode = ensure_bool(settings_dict['dark_mode'])
+                logger.info(f"Set dark_mode to {self.dark_mode}")
                 
                 # Reload theme colors if dark mode changed
                 if old_dark_mode != self.dark_mode:
                     self.load_theme_colors()
             
             if 'minute_based_avg' in settings_dict:
-                # Explicitly convert to boolean
-                self.minute_based_avg = self._str_to_bool(settings_dict['minute_based_avg'])
+                self.minute_based_avg = ensure_bool(settings_dict['minute_based_avg'])
+                logger.info(f"Set minute_based_avg to {self.minute_based_avg}")
+                
+            if 'use_average_pricing' in settings_dict:
+                self.use_average_pricing = ensure_bool(settings_dict['use_average_pricing'])
+                logger.info(f"Set use_average_pricing to {self.use_average_pricing}")
+                
+            if 'timeframe_minutes' in settings_dict:
+                # Ensure it's within valid range (1-60 minutes)
+                try:
+                    timeframe = int(settings_dict['timeframe_minutes'])
+                    self.timeframe_minutes = max(1, min(60, timeframe))
+                    logger.info(f"Set timeframe_minutes to {self.timeframe_minutes}")
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Invalid timeframe_minutes value: {settings_dict['timeframe_minutes']}")
+                    logger.warning(f"Error: {str(e)}")
+                    # Keep the current value
             
             # Log the updated settings
-            logger.info(f"Settings updated - auto_start: {self.auto_start}")
+            logger.info(f"Settings updated - auto_start: {self.auto_start}, use_average_pricing: {self.use_average_pricing}, timeframe_minutes: {self.timeframe_minutes}")
             
             # Save changes
-            self.save_config()
+            if not self.save_config():
+                logger.error("Failed to save config file")
+                return False
+            
+            # Double-check settings were saved properly
+            test_config = configparser.ConfigParser()
+            test_config.read(CONFIG_FILE)
+            
+            if 'Settings' in test_config:
+                saved_use_avg = test_config.get('Settings', 'use_average_pricing', fallback='MISSING')
+                if saved_use_avg == 'MISSING':
+                    logger.error("Settings verification failed! use_average_pricing not saved correctly.")
+                    return False
+            else:
+                logger.error("Settings verification failed! Settings section missing.")
+                return False
             
             return True
         
@@ -607,12 +721,11 @@ def get_version_info():
     """Return version information for this module."""
     return {
         "module": "webull_realtime_config",
-        "version": "1.6",
+        "version": "2.2",
         "created": "2025-05-06 15:00:00",
-        "modified": "2025-05-09 23:45:00"
+        "modified": "2025-05-23 08:15:00"
     }
 
-# Webull Realtime P&L Monitor - Configuration Module - v1.6
+# Webull Realtime P&L Monitor - Configuration Module - v2.2
 # Created: 2025-05-06 15:00:00
-# Last Modified: 2025-05-09 23:45:00
-# webull_realtime_config.py
+# Last Modified: 2025-05-23 08:15:00

@@ -34,3 +34,38 @@
 /webull_log_parser.py
 /webull_parser_cli.py
 /__pycache__
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Claude
+.claude/
+
+# Data files
+*.csv
+*.db
+*.sqlite
+*.json
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp files
+*.tmp
+*.bak
+*~

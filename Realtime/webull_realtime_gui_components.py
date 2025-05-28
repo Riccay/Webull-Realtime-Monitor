@@ -1,10 +1,10 @@
 """
-Webull Realtime P&L Monitor - GUI Components Module - v2.0
+Webull Realtime P&L Monitor - GUI Components Module - v2.8
 Created: 2025-05-07 10:45:00
-Last Modified: 2025-05-10 17:00:00
+Last Modified: 2025-05-24 12:00:00
 
 This module provides specialized GUI components for the Webull Realtime P&L Monitor.
-It handles dialogs, charts, and other complex UI elements.
+It handles dialogs, charts, and other complex UI elements including journal functionality.
 """
 
 import os
@@ -14,14 +14,23 @@ import logging
 import traceback
 import tkinter as tk
 from tkinter import ttk, messagebox, colorchooser, filedialog
-from datetime import datetime
+from datetime import datetime, date
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.dates as mdates
 import pandas as pd
+import configparser
 
 # Import from common module
-from webull_realtime_common import logger, TRADES_DIR
+from webull_realtime_common import logger, TRADES_DIR, CONFIG_FILE
+
+# Import journal functionality - look in parent directory
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from journal_db import save_journal_entry, get_journal_entry
+from journal_integration import get_journal_export_script
 
 class ToolTip:
     """
@@ -93,9 +102,9 @@ class WebullGUIComponents:
             config: WebullConfig instance
         """
         # Version info
-        self.version = "2.0"
+        self.version = "2.8"
         self.created_date = "2025-05-07 10:45:00"
-        self.modified_date = "2025-05-10 17:00:00"
+        self.modified_date = "2025-05-24 12:00:00"
         
         self.gui = gui_manager
         self.config = config
@@ -286,8 +295,8 @@ class WebullGUIComponents:
                            color=line_color)
                 
                 # Add trade markers - green for profit, red for loss
-                profits = df[df['PnL'] > 0]
-                losses = df[df['PnL'] < 0]
+                profits = df[df['Result'] == 'Profit']
+                losses = df[df['Result'] == 'Loss']
                 
                 if not profits.empty:
                     self.ax.scatter(profits['SellTimeObj'], profits['CumulativePnL'], 
@@ -717,7 +726,8 @@ This tool monitors Webull log files to calculate
 daily P&L for day trading without interfering
 with Webull's operation.
 
-Minute-Based Averaging: {"Enabled" if self.config.minute_based_avg else "Disabled"}
+Time-Based Averaging: {self.config.timeframe_minutes} minutes
+Use Average Pricing: {"Enabled" if self.config.use_average_pricing else "Disabled"}
 """
             
             # Create a dialog
@@ -797,10 +807,12 @@ Minute-Based Averaging: {"Enabled" if self.config.minute_based_avg else "Disable
     def show_settings_dialog(self):
         """Display settings dialog."""
         try:
-            # Create settings dialog
+            # COMPLETELY REDESIGNED FIXED SETTINGS DIALOG
+            # Create settings dialog with explicit size
             settings_window = tk.Toplevel(self.gui.root)
             settings_window.title("Settings")
-            settings_window.geometry("550x500")  # Increased height to ensure all elements are visible
+            settings_window.geometry("550x450")  # Smaller fixed height to ensure buttons are visible
+            settings_window.minsize(550, 450)  # Enforce minimum size to keep buttons visible
             settings_window.resizable(True, True)
             settings_window.transient(self.gui.root)
             settings_window.grab_set()
@@ -808,8 +820,12 @@ Minute-Based Averaging: {"Enabled" if self.config.minute_based_avg else "Disable
             # Style the dialog
             settings_window.config(background=self.config.background_color)
             
+            # Create a main container frame that will hold everything
+            main_container = tk.Frame(settings_window, background=self.config.background_color)
+            main_container.pack(fill=tk.BOTH, expand=True)
+            
             # Create header
-            header_frame = tk.Frame(settings_window, background=self.config.primary_color, height=40)
+            header_frame = tk.Frame(main_container, background=self.config.primary_color, height=40)
             header_frame.pack(fill=tk.X, padx=0, pady=0)
             
             header_label = tk.Label(
@@ -823,195 +839,60 @@ Minute-Based Averaging: {"Enabled" if self.config.minute_based_avg else "Disable
             )
             header_label.pack(side=tk.LEFT)
             
-            # Create notebook for tabbed interface
-            notebook = ttk.Notebook(settings_window)
-            notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+            # Content area - scrollable if needed
+            content_container = tk.Frame(main_container, background=self.config.background_color)
+            content_container.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
             
-            # General tab
-            general_tab = tk.Frame(notebook, background=self.config.background_color)
-            notebook.add(general_tab, text="General")
-            
-            # Appearance tab
-            appearance_tab = tk.Frame(notebook, background=self.config.background_color)
-            notebook.add(appearance_tab, text="Appearance")
-            
-            # Add settings to General tab
-            tk.Label(general_tab, text="Log Folder:", background=self.config.background_color, foreground=self.config.text_color).grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
-            
-            log_folder_var = tk.StringVar(value=self.config.log_folder)
-            log_folder_entry = tk.Entry(general_tab, textvariable=log_folder_var, width=40)
-            log_folder_entry.grid(row=0, column=1, sticky=tk.W, padx=5, pady=5)
-            
-            browse_button = self.create_modern_button(general_tab, "Browse", lambda: self.browse_folder_dialog(log_folder_var), width=8)
-            browse_button.grid(row=0, column=2, padx=5, pady=5)
-            
-            tk.Label(general_tab, text="Scan Interval (seconds):", background=self.config.background_color, foreground=self.config.text_color).grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
-            
-            scan_interval_var = tk.IntVar(value=self.config.scan_interval)
-            scan_interval_entry = tk.Entry(general_tab, textvariable=scan_interval_var, width=5)
-            scan_interval_entry.grid(row=1, column=1, sticky=tk.W, padx=5, pady=5)
-            
-            # Auto start checkbox
-            auto_start_var = tk.BooleanVar(value=self.config.auto_start)
-            auto_start_check = tk.Checkbutton(general_tab, text="Start monitoring automatically", variable=auto_start_var, 
-                                             background=self.config.background_color, foreground=self.config.text_color,
-                                             selectcolor=self.config.background_color if self.config.dark_mode else None)
-            auto_start_check.grid(row=2, column=0, columnspan=2, sticky=tk.W, padx=5, pady=5)
-            
-            # Minimize to tray checkbox
-            minimize_tray_var = tk.BooleanVar(value=self.config.minimize_to_tray)
-            minimize_tray_check = tk.Checkbutton(general_tab, text="Minimize to system tray", variable=minimize_tray_var, 
-                                                background=self.config.background_color, foreground=self.config.text_color,
-                                                selectcolor=self.config.background_color if self.config.dark_mode else None)
-            minimize_tray_check.grid(row=3, column=0, columnspan=2, sticky=tk.W, padx=5, pady=5)
-            
-            # Minute-based averaging checkbox
-            minute_based_avg_var = tk.BooleanVar(value=self.config.minute_based_avg)
-            minute_based_avg_check = tk.Checkbutton(general_tab, text="Use minute-based price averaging", variable=minute_based_avg_var, 
-                                                   background=self.config.background_color, foreground=self.config.text_color,
-                                                   selectcolor=self.config.background_color if self.config.dark_mode else None)
-            minute_based_avg_check.grid(row=4, column=0, columnspan=2, sticky=tk.W, padx=5, pady=5)
-            
-            # Add help text for minute-based averaging
-            minute_based_help = tk.Label(
-                general_tab, 
-                text="Minute-based averaging groups trades by minute and calculates P&L using average prices within each minute.",
-                background=self.config.background_color, 
-                foreground=self.config.text_color,
-                justify=tk.LEFT,
-                wraplength=400
-            )
-            minute_based_help.grid(row=5, column=0, columnspan=3, sticky=tk.W, padx=20, pady=(0, 10))
-            
-            # Add settings to Appearance tab
-            # Dark mode option
-            dark_mode_var = tk.BooleanVar(value=self.config.dark_mode)
-            dark_mode_check = tk.Checkbutton(appearance_tab, text="Dark Mode", variable=dark_mode_var, 
-                                            background=self.config.background_color, foreground=self.config.text_color,
-                                            selectcolor=self.config.background_color if self.config.dark_mode else None)
-            dark_mode_check.grid(row=0, column=0, columnspan=2, sticky=tk.W, padx=5, pady=5)
-            
-            tk.Label(appearance_tab, text="Primary Color:", background=self.config.background_color, foreground=self.config.text_color).grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
-            
-            primary_color_button = tk.Button(
-                appearance_tab, 
-                text="      ", 
-                background=self.config.primary_color,
-                command=lambda: self.choose_color("primary_color")
-            )
-            primary_color_button.grid(row=1, column=1, sticky=tk.W, padx=5, pady=5)
-            
-            tk.Label(appearance_tab, text="Background Color:", background=self.config.background_color, foreground=self.config.text_color).grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
-            
-            bg_color_button = tk.Button(
-                appearance_tab, 
-                text="      ", 
-                background=self.config.background_color,
-                command=lambda: self.choose_color("background_color")
-            )
-            bg_color_button.grid(row=2, column=1, sticky=tk.W, padx=5, pady=5)
-            
-            tk.Label(appearance_tab, text="PnL Panel Color:", background=self.config.background_color, foreground=self.config.text_color).grid(row=3, column=0, sticky=tk.W, padx=5, pady=5)
-            
-            pnl_color_button = tk.Button(
-                appearance_tab, 
-                text="      ", 
-                background=self.config.pnl_bg_color,
-                command=lambda: self.choose_color("pnl_bg_color")
-            )
-            pnl_color_button.grid(row=3, column=1, sticky=tk.W, padx=5, pady=5)
-            
-            tk.Label(appearance_tab, text="Text Color:", background=self.config.background_color, foreground=self.config.text_color).grid(row=4, column=0, sticky=tk.W, padx=5, pady=5)
-            
-            text_color_button = tk.Button(
-                appearance_tab, 
-                text="      ", 
-                background=self.config.text_color,
-                command=lambda: self.choose_color("text_color")
-            )
-            text_color_button.grid(row=4, column=1, sticky=tk.W, padx=5, pady=5)
-            
-            tk.Label(appearance_tab, text="Profit Color:", background=self.config.background_color, foreground=self.config.text_color).grid(row=5, column=0, sticky=tk.W, padx=5, pady=5)
-            
-            profit_color_button = tk.Button(
-                appearance_tab, 
-                text="      ", 
-                background=self.config.profit_colors[3],
-                command=lambda: self.choose_color("profit_color")
-            )
-            profit_color_button.grid(row=5, column=1, sticky=tk.W, padx=5, pady=5)
-            
-            tk.Label(appearance_tab, text="Loss Color:", background=self.config.background_color, foreground=self.config.text_color).grid(row=6, column=0, sticky=tk.W, padx=5, pady=5)
-            
-            loss_color_button = tk.Button(
-                appearance_tab, 
-                text="      ", 
-                background=self.config.loss_colors[3],
-                command=lambda: self.choose_color("loss_color")
-            )
-            loss_color_button.grid(row=6, column=1, sticky=tk.W, padx=5, pady=5)
-            
-            # Metric color scale section
-            color_scale_label = tk.Label(
-                appearance_tab, 
-                text="Metric Color Scale:",
-                font=("Segoe UI", 10, "bold"),
-                background=self.config.background_color,
-                foreground=self.config.text_color
-            )
-            color_scale_label.grid(row=7, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(15, 5))
-            
-            # Min (Bad) color
-            tk.Label(appearance_tab, text="Bad (1):", background=self.config.background_color, foreground=self.config.text_color).grid(row=8, column=0, sticky=tk.W, padx=5, pady=5)
-            
-            min_color_button = tk.Button(
-                appearance_tab, 
-                text="      ", 
-                background=self.config.metric_colors[0],  # 1st color
-                command=lambda: self.choose_color("color_scale_min")
-            )
-            min_color_button.grid(row=8, column=1, sticky=tk.W, padx=5, pady=5)
-            
-            # Mid (Neutral) color
-            tk.Label(appearance_tab, text="Neutral (5):", background=self.config.background_color, foreground=self.config.text_color).grid(row=9, column=0, sticky=tk.W, padx=5, pady=5)
-            
-            mid_color_button = tk.Button(
-                appearance_tab, 
-                text="      ", 
-                background=self.config.metric_colors[4],  # 5th color
-                command=lambda: self.choose_color("color_scale_mid")
-            )
-            mid_color_button.grid(row=9, column=1, sticky=tk.W, padx=5, pady=5)
-            
-            # Max (Good) color
-            tk.Label(appearance_tab, text="Good (10):", background=self.config.background_color, foreground=self.config.text_color).grid(row=10, column=0, sticky=tk.W, padx=5, pady=5)
-            
-            max_color_button = tk.Button(
-                appearance_tab, 
-                text="      ", 
-                background=self.config.metric_colors[9],  # 10th color
-                command=lambda: self.choose_color("color_scale_max")
-            )
-            max_color_button.grid(row=10, column=1, sticky=tk.W, padx=5, pady=5)
-            
-            # Reset colors button
-            reset_button = self.create_modern_button(appearance_tab, "Reset to Defaults", self.reset_colors, width=15)
-            reset_button.grid(row=11, column=0, columnspan=2, sticky=tk.W, padx=5, pady=15)
-            
-            # Add buttons at the bottom - ENHANCED VISIBILITY
-            button_frame = tk.Frame(settings_window, background=self.config.background_color, height=50)
-            button_frame.pack(fill=tk.X, padx=10, pady=15)  # Increased padding
+            # Button area - at the very bottom of the main container, separate from content
+            bottom_area = tk.Frame(main_container, background=self.config.background_color, height=80)
+            bottom_area.pack(fill=tk.X, side=tk.BOTTOM, padx=10, pady=10)
             
             # Create a separator for visual clarity
-            separator = ttk.Separator(settings_window, orient='horizontal')
-            separator.pack(fill=tk.X, padx=10, pady=5)
+            separator = ttk.Separator(bottom_area, orient='horizontal')
+            separator.pack(fill=tk.X, padx=0, pady=5)
             
-            # Enhanced Save button with better visibility
+            # Button frame inside bottom area
+            button_frame = tk.Frame(bottom_area, background=self.config.background_color, height=40)
+            button_frame.pack(fill=tk.X, padx=0, pady=5)
+            
+            # Variables to store settings
+            settings_vars = {
+                'log_folder': tk.StringVar(value=self.config.log_folder),
+                'scan_interval': tk.IntVar(value=self.config.scan_interval),
+                'auto_start': tk.BooleanVar(value=self.config.auto_start),
+                'minimize_tray': tk.BooleanVar(value=self.config.minimize_to_tray),
+                'dark_mode': tk.BooleanVar(value=self.config.dark_mode),
+                'use_average_pricing': tk.BooleanVar(value=self.config.use_average_pricing),
+                'minute_based_avg': tk.BooleanVar(value=self.config.minute_based_avg),
+                'timeframe_minutes': tk.IntVar(value=self.config.timeframe_minutes)
+            }
+            
+            # Create tabs in the content area
+            notebook = ttk.Notebook(content_container)
+            notebook.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
+            
+            # 1. General Tab
+            general_tab = self.create_general_settings_tab(notebook, settings_vars)
+            notebook.add(general_tab, text="General")
+            
+            # 2. Trading Tab
+            trading_tab = self.create_trading_settings_tab(notebook, settings_vars)
+            notebook.add(trading_tab, text="Trading")
+            
+            # 3. Appearance Tab
+            appearance_tab = self.create_appearance_settings_tab(notebook, settings_vars)
+            notebook.add(appearance_tab, text="Appearance")
+            
+            # Create a direct save_settings function for this dialog
+            def on_save_settings():
+                self.direct_save_settings(settings_vars, settings_window)
+            
+            # Save Button - placed at bottom-right
             save_button = tk.Button(
                 button_frame,
                 text="SAVE SETTINGS",
                 font=("Segoe UI", 10, "bold"),
-                background="#4CAF50",  # Bright green - highly visible
+                background="#4CAF50",
                 foreground="white",
                 activebackground="#45a049",
                 activeforeground="white",
@@ -1019,29 +900,460 @@ Minute-Based Averaging: {"Enabled" if self.config.minute_based_avg else "Disable
                 borderwidth=2,
                 padx=15,
                 pady=5,
-                command=lambda: self.save_settings(
-                    log_folder_var.get(),
-                    scan_interval_var.get(),
-                    auto_start_var.get(),
-                    minimize_tray_var.get(),
-                    dark_mode_var.get(),
-                    minute_based_avg_var.get(),
-                    settings_window
-                )
+                command=on_save_settings
             )
             save_button.pack(side=tk.RIGHT, padx=10, pady=5)
             
-            cancel_button = self.create_modern_button(
-                button_frame, "Cancel", 
-                settings_window.destroy,
-                width=10
+            # Cancel Button - placed next to Save
+            cancel_button = tk.Button(
+                button_frame,
+                text="Cancel",
+                font=("Segoe UI", 10),
+                background=self.config.primary_color,
+                foreground="white",
+                activebackground=self.config.primary_color,
+                activeforeground="white",
+                relief=tk.FLAT,
+                width=10,
+                command=settings_window.destroy
             )
             cancel_button.pack(side=tk.RIGHT, padx=5, pady=5)
+            
+            # Add protocol handler for window close (X button)
+            settings_window.protocol("WM_DELETE_WINDOW", settings_window.destroy)
             
         except Exception as e:
             logger.error(f"Error showing settings dialog: {str(e)}")
             logger.error(traceback.format_exc())
             messagebox.showerror("Error", f"Failed to show settings: {str(e)}")
+    
+    def create_general_settings_tab(self, parent, settings_vars):
+        """Create the general settings tab"""
+        general_tab = tk.Frame(parent, background=self.config.background_color)
+        
+        # Log Folder
+        tk.Label(general_tab, text="Log Folder:", background=self.config.background_color, foreground=self.config.text_color).grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        
+        log_folder_entry = tk.Entry(general_tab, textvariable=settings_vars['log_folder'], width=40)
+        log_folder_entry.grid(row=0, column=1, sticky=tk.W, padx=5, pady=5)
+        
+        browse_button = self.create_modern_button(
+            general_tab, 
+            "Browse", 
+            lambda: self.browse_folder_dialog(settings_vars['log_folder']), 
+            width=8
+        )
+        browse_button.grid(row=0, column=2, padx=5, pady=5)
+        
+        # Scan Interval
+        tk.Label(general_tab, text="Scan Interval (seconds):", background=self.config.background_color, foreground=self.config.text_color).grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        
+        scan_interval_entry = tk.Entry(general_tab, textvariable=settings_vars['scan_interval'], width=5)
+        scan_interval_entry.grid(row=1, column=1, sticky=tk.W, padx=5, pady=5)
+        
+        # Auto start checkbox
+        auto_start_check = tk.Checkbutton(
+            general_tab, 
+            text="Start monitoring automatically", 
+            variable=settings_vars['auto_start'], 
+            background=self.config.background_color, 
+            foreground=self.config.text_color,
+            selectcolor=self.config.background_color if self.config.dark_mode else None
+        )
+        auto_start_check.grid(row=2, column=0, columnspan=2, sticky=tk.W, padx=5, pady=5)
+        
+        # Minimize to tray checkbox
+        minimize_tray_check = tk.Checkbutton(
+            general_tab, 
+            text="Minimize to system tray", 
+            variable=settings_vars['minimize_tray'], 
+            background=self.config.background_color, 
+            foreground=self.config.text_color,
+            selectcolor=self.config.background_color if self.config.dark_mode else None
+        )
+        minimize_tray_check.grid(row=3, column=0, columnspan=2, sticky=tk.W, padx=5, pady=5)
+        
+        return general_tab
+    
+    def create_trading_settings_tab(self, parent, settings_vars):
+        """Create the trading settings tab"""
+        trading_tab = tk.Frame(parent, background=self.config.background_color)
+        
+        # Use average pricing checkbox
+        use_avg_pricing_check = tk.Checkbutton(
+            trading_tab, 
+            text="Use average pricing for profitability calculation", 
+            variable=settings_vars['use_average_pricing'], 
+            background=self.config.background_color, 
+            foreground=self.config.text_color,
+            selectcolor=self.config.background_color if self.config.dark_mode else None
+        )
+        use_avg_pricing_check.grid(row=0, column=0, columnspan=2, sticky=tk.W, padx=5, pady=5)
+        
+        # Time frame selection
+        tk.Label(
+            trading_tab, 
+            text="Time frame for average pricing (minutes):", 
+            background=self.config.background_color, 
+            foreground=self.config.text_color
+        ).grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        
+        timeframe_combobox = ttk.Combobox(
+            trading_tab, 
+            textvariable=settings_vars['timeframe_minutes'], 
+            values=[1, 5, 10, 15, 30, 60], 
+            width=5,
+            state="readonly"
+        )
+        timeframe_combobox.grid(row=1, column=1, sticky=tk.W, padx=5, pady=5)
+        
+        # Add help text for time-based averaging
+        timeframe_help = tk.Label(
+            trading_tab, 
+            text="When using average pricing, trades within the same time frame are grouped together. "
+                 "The profitability of a trade is determined by comparing the average buy price to "
+                 "the average sell price within that time frame.",
+            background=self.config.background_color, 
+            foreground=self.config.text_color,
+            justify=tk.LEFT,
+            wraplength=400
+        )
+        timeframe_help.grid(row=2, column=0, columnspan=3, sticky=tk.W, padx=20, pady=(0, 10))
+        
+        # Minute-based averaging checkbox
+        minute_based_avg_check = tk.Checkbutton(
+            trading_tab, 
+            text="Use minute-based price averaging", 
+            variable=settings_vars['minute_based_avg'], 
+            background=self.config.background_color, 
+            foreground=self.config.text_color,
+            selectcolor=self.config.background_color if self.config.dark_mode else None
+        )
+        minute_based_avg_check.grid(row=3, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(15, 5))
+        
+        # Add help text for minute-based averaging
+        minute_based_help = tk.Label(
+            trading_tab, 
+            text="Minute-based averaging groups trades by minute and calculates P&L using average prices within each minute. "
+                 "This affects the actual P&L calculations, not just the profitability determination.",
+            background=self.config.background_color, 
+            foreground=self.config.text_color,
+            justify=tk.LEFT,
+            wraplength=400
+        )
+        minute_based_help.grid(row=4, column=0, columnspan=3, sticky=tk.W, padx=20, pady=(0, 10))
+        
+        return trading_tab
+    
+    def create_appearance_settings_tab(self, parent, settings_vars):
+        """Create the appearance settings tab"""
+        appearance_tab = tk.Frame(parent, background=self.config.background_color)
+        appearance_frame = tk.Frame(appearance_tab, background=self.config.background_color)
+        appearance_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Create a canvas with scrollbar for the appearance tab
+        canvas = tk.Canvas(appearance_frame, bg=self.config.background_color, highlightthickness=0)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        # Add scrollbar to the canvas
+        scrollbar = ttk.Scrollbar(appearance_frame, orient=tk.VERTICAL, command=canvas.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Configure the canvas
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.bind('<Configure>', lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        
+        # Create a frame inside the canvas to hold all appearance settings
+        appearance_settings = tk.Frame(canvas, background=self.config.background_color)
+        canvas.create_window((0, 0), window=appearance_settings, anchor="nw")
+        
+        # Dark mode option
+        dark_mode_check = tk.Checkbutton(
+            appearance_settings, 
+            text="Dark Mode", 
+            variable=settings_vars['dark_mode'], 
+            background=self.config.background_color, 
+            foreground=self.config.text_color,
+            selectcolor=self.config.background_color if self.config.dark_mode else None
+        )
+        dark_mode_check.grid(row=0, column=0, columnspan=2, sticky=tk.W, padx=5, pady=5)
+        
+        tk.Label(appearance_settings, text="Primary Color:", background=self.config.background_color, foreground=self.config.text_color).grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        
+        primary_color_button = tk.Button(
+            appearance_settings, 
+            text="      ", 
+            background=self.config.primary_color,
+            command=lambda: self.choose_color("primary_color")
+        )
+        primary_color_button.grid(row=1, column=1, sticky=tk.W, padx=5, pady=5)
+        
+        tk.Label(appearance_settings, text="Background Color:", background=self.config.background_color, foreground=self.config.text_color).grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
+        
+        bg_color_button = tk.Button(
+            appearance_settings, 
+            text="      ", 
+            background=self.config.background_color,
+            command=lambda: self.choose_color("background_color")
+        )
+        bg_color_button.grid(row=2, column=1, sticky=tk.W, padx=5, pady=5)
+        
+        tk.Label(appearance_settings, text="PnL Panel Color:", background=self.config.background_color, foreground=self.config.text_color).grid(row=3, column=0, sticky=tk.W, padx=5, pady=5)
+        
+        pnl_color_button = tk.Button(
+            appearance_settings, 
+            text="      ", 
+            background=self.config.pnl_bg_color,
+            command=lambda: self.choose_color("pnl_bg_color")
+        )
+        pnl_color_button.grid(row=3, column=1, sticky=tk.W, padx=5, pady=5)
+        
+        tk.Label(appearance_settings, text="Text Color:", background=self.config.background_color, foreground=self.config.text_color).grid(row=4, column=0, sticky=tk.W, padx=5, pady=5)
+        
+        text_color_button = tk.Button(
+            appearance_settings, 
+            text="      ", 
+            background=self.config.text_color,
+            command=lambda: self.choose_color("text_color")
+        )
+        text_color_button.grid(row=4, column=1, sticky=tk.W, padx=5, pady=5)
+        
+        tk.Label(appearance_settings, text="Profit Color:", background=self.config.background_color, foreground=self.config.text_color).grid(row=5, column=0, sticky=tk.W, padx=5, pady=5)
+        
+        profit_color_button = tk.Button(
+            appearance_settings, 
+            text="      ", 
+            background=self.config.profit_colors[3],
+            command=lambda: self.choose_color("profit_color")
+        )
+        profit_color_button.grid(row=5, column=1, sticky=tk.W, padx=5, pady=5)
+        
+        tk.Label(appearance_settings, text="Loss Color:", background=self.config.background_color, foreground=self.config.text_color).grid(row=6, column=0, sticky=tk.W, padx=5, pady=5)
+        
+        loss_color_button = tk.Button(
+            appearance_settings, 
+            text="      ", 
+            background=self.config.loss_colors[3],
+            command=lambda: self.choose_color("loss_color")
+        )
+        loss_color_button.grid(row=6, column=1, sticky=tk.W, padx=5, pady=5)
+        
+        # Metric color scale section
+        color_scale_label = tk.Label(
+            appearance_settings, 
+            text="Metric Color Scale:",
+            font=("Segoe UI", 10, "bold"),
+            background=self.config.background_color,
+            foreground=self.config.text_color
+        )
+        color_scale_label.grid(row=7, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(15, 5))
+        
+        # Min (Bad) color
+        tk.Label(appearance_settings, text="Bad (1):", background=self.config.background_color, foreground=self.config.text_color).grid(row=8, column=0, sticky=tk.W, padx=5, pady=5)
+        
+        min_color_button = tk.Button(
+            appearance_settings, 
+            text="      ", 
+            background=self.config.metric_colors[0],  # 1st color
+            command=lambda: self.choose_color("color_scale_min")
+        )
+        min_color_button.grid(row=8, column=1, sticky=tk.W, padx=5, pady=5)
+        
+        # Mid (Neutral) color
+        tk.Label(appearance_settings, text="Neutral (5):", background=self.config.background_color, foreground=self.config.text_color).grid(row=9, column=0, sticky=tk.W, padx=5, pady=5)
+        
+        mid_color_button = tk.Button(
+            appearance_settings, 
+            text="      ", 
+            background=self.config.metric_colors[4],  # 5th color
+            command=lambda: self.choose_color("color_scale_mid")
+        )
+        mid_color_button.grid(row=9, column=1, sticky=tk.W, padx=5, pady=5)
+        
+        # Max (Good) color
+        tk.Label(appearance_settings, text="Good (10):", background=self.config.background_color, foreground=self.config.text_color).grid(row=10, column=0, sticky=tk.W, padx=5, pady=5)
+        
+        max_color_button = tk.Button(
+            appearance_settings, 
+            text="      ", 
+            background=self.config.metric_colors[9],  # 10th color
+            command=lambda: self.choose_color("color_scale_max")
+        )
+        max_color_button.grid(row=10, column=1, sticky=tk.W, padx=5, pady=5)
+        
+        # Reset colors button
+        reset_button = self.create_modern_button(appearance_settings, "Reset to Defaults", self.reset_colors, width=15)
+        reset_button.grid(row=11, column=0, columnspan=2, sticky=tk.W, padx=5, pady=15)
+        
+        return appearance_tab
+    
+    def direct_save_settings(self, settings_vars, dialog):
+        """
+        Direct method to save settings from the dialog.
+        This is a completely rewritten version to fix the issues.
+        
+        Args:
+            settings_vars: Dictionary of setting variables
+            dialog: Dialog window to close
+        """
+        try:
+            logger.info("Starting direct_save_settings")
+            
+            # Extract all values from settings_vars
+            log_folder = settings_vars['log_folder'].get()
+            
+            # CRITICAL FIX: Wrap these in try/except to ensure proper conversion
+            try:
+                scan_interval = int(settings_vars['scan_interval'].get())
+                if scan_interval < 1:
+                    raise ValueError("Scan interval must be at least 1 second.")
+            except (ValueError, TypeError) as e:
+                messagebox.showerror("Invalid Input", f"Scan interval error: {str(e)}")
+                return False
+                
+            try:
+                timeframe_minutes = int(settings_vars['timeframe_minutes'].get())
+                if timeframe_minutes < 1 or timeframe_minutes > 60:
+                    raise ValueError("Time frame must be between 1 and 60 minutes.")
+            except (ValueError, TypeError) as e:
+                messagebox.showerror("Invalid Input", f"Time frame error: {str(e)}")
+                return False
+            
+            # Get boolean values directly from the BooleanVar objects
+            auto_start = settings_vars['auto_start'].get()
+            minimize_tray = settings_vars['minimize_tray'].get()
+            dark_mode = settings_vars['dark_mode'].get()
+            minute_based_avg = settings_vars['minute_based_avg'].get()
+            use_average_pricing = settings_vars['use_average_pricing'].get()
+            
+            # DEBUG: Log the actual values being saved
+            logger.info(f"Values to save: use_average_pricing={use_average_pricing} (type={type(use_average_pricing).__name__})")
+            logger.info(f"Values to save: timeframe_minutes={timeframe_minutes} (type={type(timeframe_minutes).__name__})")
+            logger.info(f"Values to save: minute_based_avg={minute_based_avg} (type={type(minute_based_avg).__name__})")
+            
+            # Check if any trading setting has changed
+            trading_settings_changed = (
+                self.config.use_average_pricing != use_average_pricing or
+                self.config.minute_based_avg != minute_based_avg or
+                self.config.timeframe_minutes != timeframe_minutes
+            )
+            
+            # Create settings dictionary
+            settings = {
+                'log_folder': log_folder,
+                'scan_interval': scan_interval,
+                'auto_start': auto_start,
+                'minimize_to_tray': minimize_tray,
+                'dark_mode': dark_mode,
+                'minute_based_avg': minute_based_avg,
+                'use_average_pricing': use_average_pricing,
+                'timeframe_minutes': timeframe_minutes
+            }
+            
+            # Log the settings being saved
+            logger.info(f"Settings to save: {settings}")
+            
+            # Directly update the config attributes for each setting
+            self.config.log_folder = log_folder
+            self.config.scan_interval = scan_interval 
+            self.config.auto_start = auto_start
+            self.config.minimize_to_tray = minimize_tray
+            self.config.dark_mode = dark_mode
+            self.config.minute_based_avg = minute_based_avg
+            self.config.use_average_pricing = use_average_pricing
+            self.config.timeframe_minutes = timeframe_minutes
+            
+            # Save the config to disk - important to save before proceeding
+            result = self.config.save_config()
+            
+            if not result:
+                logger.error("Failed to save config file!")
+                messagebox.showerror("Error", "Failed to save settings. See log for details.")
+                return False
+                
+            # Verify the settings were actually saved
+            test_config = configparser.ConfigParser()
+            test_config.read(CONFIG_FILE)
+            
+            if 'Settings' in test_config:
+                saved_use_avg = test_config.get('Settings', 'use_average_pricing', fallback='MISSING')
+                saved_timeframe = test_config.get('Settings', 'timeframe_minutes', fallback='MISSING')
+                
+                logger.info(f"Verification: use_average_pricing={saved_use_avg}, timeframe_minutes={saved_timeframe}")
+                
+                if saved_use_avg == 'MISSING' or saved_timeframe == 'MISSING':
+                    logger.error("Verification failed! Settings not saved to file.")
+                    messagebox.showerror("Error", "Settings verification failed. Some settings were not saved properly.")
+                    return False
+            else:
+                logger.error("Verification failed! Settings section missing in config file.")
+                messagebox.showerror("Error", "Settings verification failed. Settings section missing in config file.")
+                return False
+            
+            # Update the UI
+            self.gui.apply_theme()
+            
+            # Update log parser settings directly
+            self.gui.log_parser.log_folder = log_folder
+            
+            # Log confirmation
+            logger.info("Settings saved successfully via direct method")
+            
+            # IMPORTANT NEW CODE: Force recalculation of metrics if trading settings changed
+            if trading_settings_changed:
+                logger.info("Trading settings changed - recalculating metrics")
+                
+                # Recalculate metrics with existing trade pairs but new settings
+                if hasattr(self.gui, 'trades') and hasattr(self.gui, 'trade_pairs') and self.gui.trades:
+                    # Match trade pairs using FIFO with new settings
+                    original_trade_pairs = self.gui.log_parser.match_buy_sell_trades(self.gui.trades)
+                    
+                    # Apply the appropriate pricing strategy based on new configuration
+                    if self.config.use_average_pricing:
+                        if self.config.timeframe_minutes <= 1:
+                            # If timeframe is 1 minute or less, use minute-based pricing
+                            trade_pairs = self.gui.analytics.apply_minute_based_pricing(original_trade_pairs)
+                            logger.info("Recalculating with minute-based pricing")
+                        else:
+                            # Otherwise use the configured time frame
+                            trade_pairs = self.gui.analytics.apply_timeframe_based_pricing(
+                                original_trade_pairs, 
+                                self.config.timeframe_minutes
+                            )
+                            logger.info(f"Recalculating with {self.config.timeframe_minutes}-minute timeframe pricing")
+                    else:
+                        # Use original FIFO trade pairs without averaging
+                        trade_pairs = original_trade_pairs
+                        logger.info("Recalculating with standard FIFO matching (no averaging)")
+                    
+                    # Store new trade pairs
+                    self.gui.trade_pairs = trade_pairs
+                    
+                    # Calculate updated metrics
+                    metrics = self.gui.analytics.calculate_advanced_metrics(trade_pairs)
+                    
+                    # Update the GUI with new metrics
+                    self.gui.update_gui(
+                        metrics_dict=metrics,
+                        trades=self.gui.trades,
+                        trade_pairs=trade_pairs,
+                        position_warnings=self.gui.log_parser.position_warnings,
+                        is_running=self.gui.running,
+                        last_scan_time=self.gui.last_scan_time
+                    )
+            
+            # Close the dialog
+            dialog.destroy()
+            
+            # Show confirmation
+            messagebox.showinfo("Settings Saved", "Settings have been saved successfully.")
+            return True
+                
+        except Exception as e:
+            logger.error(f"Error in direct_save_settings: {str(e)}")
+            logger.error(traceback.format_exc())
+            messagebox.showerror("Error", f"Failed to save settings: {str(e)}")
+            return False
     
     def browse_folder_dialog(self, string_var):
         """
@@ -1154,66 +1466,6 @@ Minute-Based Averaging: {"Enabled" if self.config.minute_based_avg else "Disable
         self.gui.apply_theme()
         messagebox.showinfo("Colors Reset", "Colors have been reset to defaults. Save settings to apply permanently.")
     
-    def save_settings(self, log_folder, scan_interval, auto_start, minimize_tray, dark_mode, minute_based_avg, dialog):
-        """
-        Save settings and close the dialog.
-        
-        Args:
-            log_folder: Log folder path
-            scan_interval: Scan interval in seconds
-            auto_start: Whether to auto-start monitoring
-            minimize_tray: Whether to minimize to tray
-            dark_mode: Whether to use dark mode
-            minute_based_avg: Whether to use minute-based price averaging
-            dialog: Dialog window to close
-        """
-        try:
-            # Validate scan interval
-            try:
-                scan_interval = int(scan_interval)
-                if scan_interval < 1:
-                    raise ValueError("Scan interval must be at least 1 second.")
-            except ValueError as ve:
-                messagebox.showerror("Invalid Input", str(ve))
-                return
-                
-            # Update settings
-            settings = {
-                'log_folder': log_folder,
-                'scan_interval': scan_interval,
-                'auto_start': auto_start,
-                'minimize_to_tray': minimize_tray,
-                'dark_mode': dark_mode,
-                'minute_based_avg': minute_based_avg
-            }
-            
-            # Log settings for debugging
-            logger.info(f"Saving settings: {settings}")
-            
-            # Update config
-            if self.config.update_settings(settings):
-                # Update the UI
-                self.gui.apply_theme()
-                
-                # Update log parser settings directly
-                self.gui.log_parser.log_folder = log_folder
-                
-                # Log confirmation
-                logger.info(f"Settings updated")
-                
-                # Close the dialog
-                dialog.destroy()
-                
-                # Show confirmation
-                messagebox.showinfo("Settings Saved", "Settings have been saved successfully.")
-            else:
-                messagebox.showerror("Error", "Failed to save settings.")
-            
-        except Exception as e:
-            logger.error(f"Error saving settings: {str(e)}")
-            logger.error(traceback.format_exc())
-            messagebox.showerror("Error", f"Failed to save settings: {str(e)}")
-    
     def browse_log_folder(self):
         """Open dialog to select log folder."""
         try:
@@ -1275,11 +1527,402 @@ Minute-Based Averaging: {"Enabled" if self.config.minute_based_avg else "Disable
         except Exception as e:
             logger.error(f"Error saving trade data: {str(e)}")
             messagebox.showerror("Error", f"Failed to save data: {str(e)}")
+    
+    def show_trade_tagging_dialog(self, trades, trade_pairs):
+        """Display trade tagging dialog."""
+        messagebox.showinfo("Not Implemented", "Trade tagging will be implemented in the next version.")
+        
+    def show_journal_dialog(self):
+        """Display trading journal dialog."""
+        try:
+            # Create the journal dialog window
+            journal_window = tk.Toplevel(self.gui.root)
+            journal_window.title("Trading Journal")
+            journal_window.geometry("700x500")
+            journal_window.resizable(True, True)
+            journal_window.transient(self.gui.root)
+            journal_window.grab_set()
+            
+            # Style the dialog
+            journal_window.config(background=self.config.background_color)
+            
+            # Create header
+            header_frame = tk.Frame(journal_window, background=self.config.primary_color, height=40)
+            header_frame.pack(fill=tk.X, padx=0, pady=0)
+            
+            header_label = tk.Label(
+                header_frame, 
+                text="Trading Journal",
+                font=("Segoe UI", 12, "bold"),
+                foreground="white",
+                background=self.config.primary_color,
+                padx=10,
+                pady=10
+            )
+            header_label.pack(side=tk.LEFT)
+            
+            # Add export journal button to header
+            export_button = tk.Button(
+                header_frame,
+                text="Export",
+                font=("Segoe UI", 9),
+                background=self.config.accent_color,
+                foreground="white",
+                activebackground=self.config.accent_color,
+                activeforeground="white",
+                relief=tk.FLAT,
+                padx=10,
+                command=lambda: self.export_journal_entries(journal_window)
+            )
+            export_button.pack(side=tk.RIGHT, padx=10, pady=5)
+            
+            # Main content frame
+            main_frame = tk.Frame(journal_window, background=self.config.background_color)
+            main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+            
+            # Date selection frame
+            date_frame = tk.Frame(main_frame, background=self.config.background_color)
+            date_frame.pack(fill=tk.X, pady=(0, 10))
+            
+            tk.Label(
+                date_frame,
+                text="Date:",
+                font=("Segoe UI", 10, "bold"),
+                background=self.config.background_color,
+                foreground=self.config.text_color
+            ).pack(side=tk.LEFT, padx=(0, 10))
+            
+            # Date entry (default to today)
+            date_var = tk.StringVar(value=datetime.now().strftime("%Y-%m-%d"))
+            date_entry = tk.Entry(
+                date_frame,
+                textvariable=date_var,
+                font=("Segoe UI", 10),
+                width=12
+            )
+            date_entry.pack(side=tk.LEFT, padx=(0, 10))
+            
+            # Load button
+            load_button = self.create_modern_button(
+                date_frame,
+                "Load",
+                lambda: self.load_journal_entry(date_var.get(), entry_text, mood_var, lessons_text, mistakes_text, wins_text, rating_var),
+                width=8
+            )
+            load_button.pack(side=tk.LEFT, padx=5)
+            
+            # Journal entry frame
+            entry_frame = tk.LabelFrame(
+                main_frame,
+                text="Journal Entry",
+                font=("Segoe UI", 10, "bold"),
+                background=self.config.background_color,
+                foreground=self.config.text_color,
+                padx=10,
+                pady=10
+            )
+            entry_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+            
+            # Main journal entry text
+            entry_text = tk.Text(
+                entry_frame,
+                font=("Segoe UI", 10),
+                wrap=tk.WORD,
+                height=8
+            )
+            entry_text.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+            
+            # Additional fields frame
+            fields_frame = tk.Frame(entry_frame, background=self.config.background_color)
+            fields_frame.pack(fill=tk.X, pady=(0, 10))
+            
+            # Left column
+            left_col = tk.Frame(fields_frame, background=self.config.background_color)
+            left_col.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
+            
+            # Mood
+            tk.Label(
+                left_col,
+                text="Today's Mood (1-5):",
+                font=("Segoe UI", 9, "bold"),
+                background=self.config.background_color,
+                foreground=self.config.text_color
+            ).pack(anchor=tk.W)
+            
+            mood_var = tk.IntVar(value=3)
+            mood_scale = tk.Scale(
+                left_col,
+                from_=1,
+                to=5,
+                orient=tk.HORIZONTAL,
+                variable=mood_var,
+                background=self.config.background_color,
+                foreground=self.config.text_color,
+                font=("Segoe UI", 8)
+            )
+            mood_scale.pack(fill=tk.X, pady=(0, 10))
+            
+            # Rating
+            tk.Label(
+                left_col,
+                text="Overall Day Rating (1-5):",
+                font=("Segoe UI", 9, "bold"),
+                background=self.config.background_color,
+                foreground=self.config.text_color
+            ).pack(anchor=tk.W)
+            
+            rating_var = tk.IntVar(value=3)
+            rating_scale = tk.Scale(
+                left_col,
+                from_=1,
+                to=5,
+                orient=tk.HORIZONTAL,
+                variable=rating_var,
+                background=self.config.background_color,
+                foreground=self.config.text_color,
+                font=("Segoe UI", 8)
+            )
+            rating_scale.pack(fill=tk.X)
+            
+            # Right column
+            right_col = tk.Frame(fields_frame, background=self.config.background_color)
+            right_col.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+            
+            # Lessons learned
+            tk.Label(
+                right_col,
+                text="Lessons Learned:",
+                font=("Segoe UI", 9, "bold"),
+                background=self.config.background_color,
+                foreground=self.config.text_color
+            ).pack(anchor=tk.W)
+            
+            lessons_text = tk.Text(
+                right_col,
+                font=("Segoe UI", 9),
+                wrap=tk.WORD,
+                height=3
+            )
+            lessons_text.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
+            
+            # Mistakes
+            tk.Label(
+                right_col,
+                text="Mistakes Made:",
+                font=("Segoe UI", 9, "bold"),
+                background=self.config.background_color,
+                foreground=self.config.text_color
+            ).pack(anchor=tk.W)
+            
+            mistakes_text = tk.Text(
+                right_col,
+                font=("Segoe UI", 9),
+                wrap=tk.WORD,
+                height=3
+            )
+            mistakes_text.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
+            
+            # Wins/Successes
+            tk.Label(
+                right_col,
+                text="Wins/Successes:",
+                font=("Segoe UI", 9, "bold"),
+                background=self.config.background_color,
+                foreground=self.config.text_color
+            ).pack(anchor=tk.W)
+            
+            wins_text = tk.Text(
+                right_col,
+                font=("Segoe UI", 9),
+                wrap=tk.WORD,
+                height=3
+            )
+            wins_text.pack(fill=tk.BOTH, expand=True)
+            
+            # Button frame
+            button_frame = tk.Frame(main_frame, background=self.config.background_color)
+            button_frame.pack(fill=tk.X, pady=(10, 0))
+            
+            # Save button
+            save_button = tk.Button(
+                button_frame,
+                text="SAVE ENTRY",
+                font=("Segoe UI", 10, "bold"),
+                background="#4CAF50",
+                foreground="white",
+                activebackground="#45a049",
+                activeforeground="white",
+                relief=tk.RAISED,
+                borderwidth=2,
+                padx=15,
+                pady=5,
+                command=lambda: self.save_journal_entry_from_dialog(
+                    date_var.get(),
+                    entry_text.get("1.0", tk.END).strip(),
+                    mood_var.get(),
+                    lessons_text.get("1.0", tk.END).strip(),
+                    mistakes_text.get("1.0", tk.END).strip(),
+                    wins_text.get("1.0", tk.END).strip(),
+                    rating_var.get(),
+                    journal_window
+                )
+            )
+            save_button.pack(side=tk.RIGHT, padx=10)
+            
+            # Close button
+            close_button = self.create_modern_button(
+                button_frame,
+                "Close",
+                journal_window.destroy,
+                width=10
+            )
+            close_button.pack(side=tk.RIGHT, padx=5)
+            
+            # Load today's entry if it exists
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            self.load_journal_entry(today_str, entry_text, mood_var, lessons_text, mistakes_text, wins_text, rating_var)
+            
+        except Exception as e:
+            logger.error(f"Error showing journal dialog: {str(e)}")
+            logger.error(traceback.format_exc())
+            messagebox.showerror("Error", f"Failed to show journal dialog: {str(e)}")
+    
+    def load_journal_entry(self, date_str, entry_text, mood_var, lessons_text, mistakes_text, wins_text, rating_var):
+        """
+        Load a journal entry for the specified date.
+        
+        Args:
+            date_str: Date string in YYYY-MM-DD format
+            entry_text: Text widget for main entry
+            mood_var: IntVar for mood
+            lessons_text: Text widget for lessons
+            mistakes_text: Text widget for mistakes
+            wins_text: Text widget for wins
+            rating_var: IntVar for rating
+        """
+        try:
+            # Validate date format
+            try:
+                datetime.strptime(date_str, "%Y-%m-%d")
+            except ValueError:
+                messagebox.showerror("Invalid Date", "Please use YYYY-MM-DD format")
+                return
+            
+            # Load entry from database
+            entry = get_journal_entry(date_str)
+            
+            if entry:
+                # Clear existing content
+                entry_text.delete("1.0", tk.END)
+                lessons_text.delete("1.0", tk.END)
+                mistakes_text.delete("1.0", tk.END)
+                wins_text.delete("1.0", tk.END)
+                
+                # Populate fields
+                entry_text.insert("1.0", entry.get('entry', ''))
+                mood_var.set(entry.get('mood', 3))
+                lessons_text.insert("1.0", entry.get('lessons', ''))
+                mistakes_text.insert("1.0", entry.get('mistakes', ''))
+                wins_text.insert("1.0", entry.get('wins', ''))
+                rating_var.set(entry.get('rating', 3))
+                
+                logger.info(f"Loaded journal entry for {date_str}")
+            else:
+                # Clear all fields for new entry
+                entry_text.delete("1.0", tk.END)
+                lessons_text.delete("1.0", tk.END)
+                mistakes_text.delete("1.0", tk.END)
+                wins_text.delete("1.0", tk.END)
+                mood_var.set(3)
+                rating_var.set(3)
+                
+                logger.info(f"No journal entry found for {date_str} - cleared form for new entry")
+                
+        except Exception as e:
+            logger.error(f"Error loading journal entry: {str(e)}")
+            logger.error(traceback.format_exc())
+            messagebox.showerror("Error", f"Failed to load journal entry: {str(e)}")
+    
+    def save_journal_entry_from_dialog(self, date_str, entry, mood, lessons, mistakes, wins, rating, dialog_window):
+        """
+        Save a journal entry from the dialog form.
+        
+        Args:
+            date_str: Date string in YYYY-MM-DD format
+            entry: Main journal entry text
+            mood: Mood rating (1-5)
+            lessons: Lessons learned text
+            mistakes: Mistakes made text
+            wins: Wins/successes text
+            rating: Overall day rating (1-5)
+            dialog_window: Dialog window reference
+        """
+        try:
+            # Validate date format
+            try:
+                datetime.strptime(date_str, "%Y-%m-%d")
+            except ValueError:
+                messagebox.showerror("Invalid Date", "Please use YYYY-MM-DD format")
+                return
+            
+            # Validate required field
+            if not entry.strip():
+                messagebox.showerror("Missing Entry", "Please enter a journal entry")
+                return
+            
+            # Save to database
+            success = save_journal_entry(
+                date=date_str,
+                entry=entry,
+                mood=mood,
+                lessons=lessons,
+                mistakes=mistakes,
+                wins=wins,
+                rating=rating
+            )
+            
+            if success:
+                messagebox.showinfo("Success", f"Journal entry saved for {date_str}")
+                logger.info(f"Saved journal entry for {date_str}")
+            else:
+                messagebox.showerror("Error", "Failed to save journal entry")
+                
+        except Exception as e:
+            logger.error(f"Error saving journal entry: {str(e)}")
+            logger.error(traceback.format_exc())
+            messagebox.showerror("Error", f"Failed to save journal entry: {str(e)}")
+    
+    def export_journal_entries(self, parent_window):
+        """
+        Export journal entries with the export functionality from journal_integration.
+        
+        Args:
+            parent_window: Parent window for the export operation
+        """
+        try:
+            # Add the journal export script to the parent window
+            # This will add an export button that downloads a JSON file
+            export_script = get_journal_export_script()
+            
+            # Create a simple info dialog explaining the export process
+            messagebox.showinfo(
+                "Export Journal Entries",
+                "Journal entries are automatically exported when you save them through the web interface.\n\n"
+                "To manually export entries:\n"
+                "1. Use the calendar web interface\n"
+                "2. Click 'Save All Journal Entries to Database'\n"
+                "3. The entries will be downloaded as a JSON file\n"
+                "4. The file will be automatically imported on next program start"
+            )
+            
+        except Exception as e:
+            logger.error(f"Error exporting journal entries: {str(e)}")
+            messagebox.showerror("Error", f"Failed to export journal entries: {str(e)}")
 
 # Version and metadata
-VERSION = "2.0"
+VERSION = "2.8"
 CREATED_DATE = "2025-05-07 10:45:00"
-LAST_MODIFIED = "2025-05-10 17:00:00"
+LAST_MODIFIED = "2025-05-24 12:00:00"
 
 # Module signature
 def get_version_info():
@@ -1291,7 +1934,7 @@ def get_version_info():
         "modified": LAST_MODIFIED
     }
 
-# Webull Realtime P&L Monitor - GUI Components Module - v2.0
+# Webull Realtime P&L Monitor - GUI Components Module - v2.8
 # Created: 2025-05-07 10:45:00
-# Last Modified: 2025-05-10 17:00:00
+# Last Modified: 2025-05-24 12:00:00
 # webull_realtime_gui_components.py

@@ -112,6 +112,8 @@ class WebullLogParser:
         self.last_file_positions = {}
         self.position_warnings = []
         self.open_positions = {}  # Track open positions by symbol
+        self.last_full_rescan = datetime.now()  # Track when we last did a full rescan
+        self.rescan_interval_minutes = 5  # Do a full rescan every 5 minutes
         
     def find_today_log_files(self):
         """
@@ -161,21 +163,26 @@ class WebullLogParser:
         all_trades = []  # Store all trades for position calculation
         
         try:
+            # Check if it's time for a full rescan
+            time_since_rescan = (datetime.now() - self.last_full_rescan).total_seconds() / 60
+            if time_since_rescan >= self.rescan_interval_minutes:
+                logger.info(f"Performing full rescan (last was {time_since_rescan:.1f} minutes ago)")
+                # Reset file positions to force re-reading from beginning
+                self.last_file_positions = {}
+                self.last_full_rescan = datetime.now()
+            
             # Process each log file
             for log_file in log_files:
-                # Skip already fully processed logs
-                if log_file in self.processed_logs:
-                    continue
+                # Note: We no longer skip "processed" logs to ensure we catch all trades
                     
                 try:
                     # Get file modification time
                     mod_time = os.path.getmtime(log_file)
                     mod_dt = datetime.fromtimestamp(mod_time)
                     
-                    # MODIFIED: Skip if file was modified in the last 0.5 seconds
-                    # This still prevents reading in-progress files but allows
-                    # quicker detection of completed trades
-                    if (datetime.now() - mod_dt).total_seconds() < 0.5:
+                    # Skip if file was modified in the last 0.1 seconds  
+                    # Reduced from 0.5 to catch trades faster
+                    if (datetime.now() - mod_dt).total_seconds() < 0.1:
                         logger.debug(f"Skipping very recently modified file: {log_file}")
                         continue
                     
@@ -184,6 +191,14 @@ class WebullLogParser:
                     
                     # Get last position we read up to for this file
                     last_position = self.last_file_positions.get(log_file, 0)
+                    
+                    # Check if file has been modified since we last read it
+                    # If so, reset position to re-scan the entire file
+                    last_read_info = self.last_file_positions.get(f"{log_file}_mod_time", 0)
+                    if last_read_info > 0 and mod_time > last_read_info:
+                        logger.info(f"File {os.path.basename(log_file)} was modified after last read, rescanning from beginning")
+                        last_position = 0
+                        self.last_file_positions[log_file] = 0
                     
                     # If file size hasn't changed and we've read it before, skip
                     if last_position >= file_size and last_position > 0:
@@ -256,13 +271,12 @@ class WebullLogParser:
                         self.last_file_positions[log_file] = file.tell()
                         logger.debug(f"Updated file position: {log_file} to {self.last_file_positions[log_file]}")
                     
-                    # Only mark as fully processed if we've read the whole file
-                    # Do not mark as processed to re-scan for missed trades
+                    # Store the modification time so we can detect if file changes
+                    self.last_file_positions[f"{log_file}_mod_time"] = mod_time
+                    
+                    # Log if we've read the whole file
                     if self.last_file_positions[log_file] >= file_size:
-                        logger.debug(f"Fully processed log file: {log_file}")
-                        # DO NOT add to processed_logs to ensure we re-scan
-                        # Fix for missing trades
-                        # self.processed_logs.add(log_file)
+                        logger.debug(f"Fully read log file: {log_file}")
                     
                 except PermissionError:
                     logger.warning(f"File is being used by another process: {log_file}")
@@ -743,6 +757,7 @@ class WebullLogParser:
         self.last_file_positions = {}
         self.position_warnings = []
         self.open_positions = {}
+        self.last_full_rescan = datetime.now()
 
 # Version and metadata
 VERSION = "1.4"

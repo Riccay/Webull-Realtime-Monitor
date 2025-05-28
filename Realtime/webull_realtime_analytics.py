@@ -1,10 +1,10 @@
 """
-Webull Realtime P&L Monitor - Analytics Module - v1.3
+Webull Realtime P&L Monitor - Analytics Module - v1.6
 Created: 2025-05-06 15:30:00
-Last Modified: 2025-05-10 16:30:00
+Last Modified: 2025-05-24 12:00:00
 
 This module provides analytics functions for the Webull Realtime P&L Monitor.
-It calculates P&L, trading metrics, and statistical analysis.
+It calculates P&L, trading metrics, statistical analysis, and integrates with journal functionality.
 """
 
 import os
@@ -16,7 +16,14 @@ import pandas as pd
 from datetime import datetime, date, timedelta
 
 # Import from common module
-from webull_realtime_common import logger, OUTPUT_DIR, truncate_to_minute
+from webull_realtime_common import logger, OUTPUT_DIR, truncate_to_minute, truncate_to_timeframe
+
+# Import journal functionality - look in parent directory
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from journal_db import get_journal_entry, save_journal_entry
 
 class WebullAnalytics:
     """Analytics engine for Webull Realtime P&L Monitor."""
@@ -166,6 +173,150 @@ class WebullAnalytics:
             logger.error(traceback.format_exc())
             return 0.0
     
+    def group_trades_by_symbol(self, trades):
+        """
+        Group trades by symbol to calculate average prices.
+        
+        Args:
+            trades (list): List of raw trades
+            
+        Returns:
+            dict: Dictionary of trades grouped by symbol with average prices
+        """
+        try:
+            if not trades:
+                return {}
+                
+            # Convert to DataFrame
+            df = pd.DataFrame(trades)
+            
+            # Group trades by symbol
+            grouped_trades = {}
+            
+            for symbol in df['Symbol'].unique():
+                symbol_trades = df[df['Symbol'] == symbol]
+                
+                # Separate buys and sells
+                buys = symbol_trades[symbol_trades['Side'].str.upper() == 'BUY']
+                sells = symbol_trades[symbol_trades['Side'].str.upper() == 'SELL']
+                
+                # Calculate volume-weighted average prices for buys and sells
+                if not buys.empty:
+                    avg_buy_price = (buys['Price'] * buys['Quantity']).sum() / buys['Quantity'].sum()
+                    total_buy_qty = buys['Quantity'].sum()
+                else:
+                    avg_buy_price = None
+                    total_buy_qty = 0
+                    
+                if not sells.empty:
+                    avg_sell_price = (sells['Price'] * sells['Quantity']).sum() / sells['Quantity'].sum()
+                    total_sell_qty = sells['Quantity'].sum()
+                else:
+                    avg_sell_price = None
+                    total_sell_qty = 0
+                
+                # Store the average prices and raw trades
+                grouped_trades[symbol] = {
+                    'symbol': symbol,
+                    'avg_buy_price': avg_buy_price,
+                    'avg_sell_price': avg_sell_price,
+                    'total_buy_qty': total_buy_qty,
+                    'total_sell_qty': total_sell_qty,
+                    'buy_trades': buys.to_dict('records') if not buys.empty else [],
+                    'sell_trades': sells.to_dict('records') if not sells.empty else []
+                }
+            
+            return grouped_trades
+            
+        except Exception as e:
+            logger.error(f"Error grouping trades by symbol: {str(e)}")
+            logger.error(traceback.format_exc())
+            return {}
+    
+    def group_trades_by_timeframe(self, trades, timeframe_minutes=5):
+        """
+        Group trades by symbol and time frame to calculate average prices.
+        
+        Args:
+            trades (list): List of raw trades
+            timeframe_minutes (int): Size of time frame in minutes (default: 5)
+            
+        Returns:
+            dict: Dictionary of trades grouped by symbol and time frame
+        """
+        try:
+            if not trades:
+                return {}
+                
+            # Convert to DataFrame
+            df = pd.DataFrame(trades)
+            
+            # Create DateTime column if it doesn't exist
+            if 'DateTime' not in df.columns:
+                if 'Date' in df.columns and 'Time' in df.columns:
+                    df['DateTime'] = df['Date'] + ' ' + df['Time']
+                else:
+                    return {}
+            
+            # Apply time frame truncation
+            df['TimeFrame'] = df['DateTime'].apply(
+                lambda x: truncate_to_timeframe(x, timeframe_minutes)
+            )
+            
+            # Convert to datetime objects for sorting
+            df['DateTimeObj'] = pd.to_datetime(df['DateTime'])
+            
+            # Sort by datetime
+            df = df.sort_values('DateTimeObj')
+            
+            # Group trades by symbol and time frame
+            grouped_trades = {}
+            
+            for symbol in df['Symbol'].unique():
+                symbol_trades = df[df['Symbol'] == symbol]
+                
+                for timeframe, timeframe_df in symbol_trades.groupby('TimeFrame'):
+                    # Calculate average price for buys and sells within this time frame
+                    buys = timeframe_df[timeframe_df['Side'].str.upper() == 'BUY']
+                    sells = timeframe_df[timeframe_df['Side'].str.upper() == 'SELL']
+                    
+                    # Calculate volume-weighted average prices
+                    if not buys.empty:
+                        avg_buy_price = (buys['Price'] * buys['Quantity']).sum() / buys['Quantity'].sum()
+                        total_buy_qty = buys['Quantity'].sum()
+                    else:
+                        avg_buy_price = None
+                        total_buy_qty = 0
+                        
+                    if not sells.empty:
+                        avg_sell_price = (sells['Price'] * sells['Quantity']).sum() / sells['Quantity'].sum()
+                        total_sell_qty = sells['Quantity'].sum()
+                    else:
+                        avg_sell_price = None
+                        total_sell_qty = 0
+                    
+                    # Create a key for this symbol and time frame
+                    key = f"{symbol}_{timeframe}"
+                    
+                    # Store the average prices and raw trades
+                    grouped_trades[key] = {
+                        'symbol': symbol,
+                        'timeframe': timeframe,
+                        'avg_buy_price': avg_buy_price,
+                        'avg_sell_price': avg_sell_price,
+                        'buy_trades': buys.to_dict('records') if not buys.empty else [],
+                        'sell_trades': sells.to_dict('records') if not sells.empty else [],
+                        'total_buy_qty': total_buy_qty,
+                        'total_sell_qty': total_sell_qty
+                    }
+            
+            return grouped_trades
+            
+        except Exception as e:
+            logger.error(f"Error grouping trades by timeframe: {str(e)}")
+            logger.error(traceback.format_exc())
+            return {}
+    
     def group_trades_by_minute(self, trades):
         """
         Group trades by minute to calculate average prices.
@@ -258,11 +409,14 @@ class WebullAnalytics:
                 self.reset_metrics()
                 return self.get_metrics_dict()
                 
-            # Use the minute-based average pricing if enabled in config
-            if self.config and self.config.minute_based_avg:
-                # Implementation of minute-based price averaging for better P&L calculation
-                # This will replace or update the trade_pairs with minute-based average pricing
-                trade_pairs = self.apply_minute_based_pricing(trade_pairs)
+            # Apply appropriate pricing strategy based on configuration
+            if self.config and self.config.use_average_pricing:
+                if self.config.timeframe_minutes <= 1:
+                    # If timeframe is 1 minute or less, use minute-based pricing
+                    trade_pairs = self.apply_minute_based_pricing(trade_pairs)
+                else:
+                    # Otherwise use the configured time frame
+                    trade_pairs = self.apply_timeframe_based_pricing(trade_pairs, self.config.timeframe_minutes)
                 
             # Create DataFrame from trade pairs
             df = pd.DataFrame(trade_pairs)
@@ -397,6 +551,182 @@ class WebullAnalytics:
             self.reset_metrics()
             return self.get_metrics_dict()
     
+    def apply_timeframe_based_pricing(self, trade_pairs, timeframe_minutes=5):
+        """
+        Apply time frame-based average pricing to trade pairs.
+        This method groups trades by symbol and time frame,
+        determines profitability based on average prices within each time frame.
+        
+        Args:
+            trade_pairs (list): List of trade pairs
+            timeframe_minutes (int): Size of time frame in minutes
+            
+        Returns:
+            list: Updated trade pairs with time frame-based average pricing
+        """
+        try:
+            if not trade_pairs:
+                return []
+                
+            # Convert to DataFrame
+            df = pd.DataFrame(trade_pairs)
+            
+            if df.empty:
+                return trade_pairs
+                
+            # Create time frame columns for buy and sell times
+            df['BuyTimeFrame'] = df['BuyTime'].apply(
+                lambda x: truncate_to_timeframe(x, timeframe_minutes)
+            )
+            df['SellTimeFrame'] = df['SellTime'].apply(
+                lambda x: truncate_to_timeframe(x, timeframe_minutes)
+            )
+            
+            # Group by symbol and time frame for buy and sell separately
+            buy_groups = {}
+            sell_groups = {}
+            
+            for symbol in df['Symbol'].unique():
+                symbol_df = df[df['Symbol'] == symbol]
+                
+                # Group buy prices by time frame
+                for buy_timeframe, buy_df in symbol_df.groupby('BuyTimeFrame'):
+                    # Calculate volume-weighted average buy price
+                    avg_buy_price = (buy_df['BuyPrice'] * buy_df['Quantity']).sum() / buy_df['Quantity'].sum()
+                    buy_groups[(symbol, buy_timeframe)] = avg_buy_price
+                
+                # Group sell prices by time frame
+                for sell_timeframe, sell_df in symbol_df.groupby('SellTimeFrame'):
+                    # Calculate volume-weighted average sell price
+                    avg_sell_price = (sell_df['SellPrice'] * sell_df['Quantity']).sum() / sell_df['Quantity'].sum()
+                    sell_groups[(symbol, sell_timeframe)] = avg_sell_price
+            
+            # Create symbol-timeframe pairs for determining profitability
+            symbol_timeframe_pairs = {}
+            
+            # Determine overall profitability for each symbol-timeframe pair
+            for (symbol, timeframe), avg_buy_price in buy_groups.items():
+                # Find matching sell time frames for this symbol
+                matching_sell_timeframes = [t for (s, t) in sell_groups.keys() if s == symbol]
+                
+                # For each matching sell time frame, check if it's profitable
+                for sell_timeframe in matching_sell_timeframes:
+                    avg_sell_price = sell_groups.get((symbol, sell_timeframe))
+                    
+                    # Determine if this pair is profitable
+                    is_profit = avg_sell_price > avg_buy_price if avg_sell_price and avg_buy_price else None
+                    
+                    # Store the result
+                    key = f"{symbol}_{timeframe}_{sell_timeframe}"
+                    symbol_timeframe_pairs[key] = {
+                        'symbol': symbol,
+                        'buy_timeframe': timeframe,
+                        'sell_timeframe': sell_timeframe,
+                        'avg_buy_price': avg_buy_price,
+                        'avg_sell_price': avg_sell_price,
+                        'is_profit': is_profit
+                    }
+            
+            # Apply average prices to determine profitability, but keep original P&L values
+            for i, pair in enumerate(trade_pairs):
+                symbol = pair['Symbol']
+                buy_timeframe = truncate_to_timeframe(pair['BuyTime'], timeframe_minutes)
+                sell_timeframe = truncate_to_timeframe(pair['SellTime'], timeframe_minutes)
+                
+                # Create key to match with symbol_timeframe_pairs
+                key = f"{symbol}_{buy_timeframe}_{sell_timeframe}"
+                
+                if key in symbol_timeframe_pairs and symbol_timeframe_pairs[key]['is_profit'] is not None:
+                    # Update the result based on time frame average pricing
+                    trade_pairs[i]['Result'] = 'Profit' if symbol_timeframe_pairs[key]['is_profit'] else 'Loss'
+            
+            # Count updated profits and losses
+            profit_count = sum(1 for pair in trade_pairs if pair['Result'] == 'Profit')
+            loss_count = len(trade_pairs) - profit_count
+            
+            logger.info(f"After timeframe-based pricing: {profit_count} profits, {loss_count} losses")
+            
+            return trade_pairs
+                
+        except Exception as e:
+            logger.error(f"Error applying timeframe-based pricing: {str(e)}")
+            logger.error(traceback.format_exc())
+            return trade_pairs
+    
+    def apply_symbol_based_pricing(self, trade_pairs):
+        """
+        Apply symbol-based average pricing to trade pairs.
+        This method calculates the average buy and sell price for each symbol
+        and determines profitability based on those average prices.
+        
+        Args:
+            trade_pairs (list): List of trade pairs
+            
+        Returns:
+            list: Updated trade pairs with symbol-based average pricing
+        """
+        try:
+            if not trade_pairs:
+                return []
+                
+            # Convert to DataFrame
+            df = pd.DataFrame(trade_pairs)
+            
+            if df.empty:
+                return trade_pairs
+                
+            # Group by symbol
+            symbol_groups = {}
+            
+            for symbol in df['Symbol'].unique():
+                symbol_df = df[df['Symbol'] == symbol]
+                
+                # Calculate overall average buy and sell prices for this symbol
+                total_buy_cost = (symbol_df['BuyPrice'] * symbol_df['Quantity']).sum()
+                total_sell_proceeds = (symbol_df['SellPrice'] * symbol_df['Quantity']).sum()
+                total_quantity = symbol_df['Quantity'].sum()
+                
+                avg_buy_price = total_buy_cost / total_quantity if total_quantity > 0 else 0
+                avg_sell_price = total_sell_proceeds / total_quantity if total_quantity > 0 else 0
+                
+                symbol_groups[symbol] = {
+                    'avg_buy_price': avg_buy_price,
+                    'avg_sell_price': avg_sell_price
+                }
+            
+            # Apply average prices to determine profitability
+            # We're not changing the actual buy/sell prices, just determining profitability
+            for i, pair in enumerate(trade_pairs):
+                symbol = pair['Symbol']
+                
+                if symbol in symbol_groups:
+                    avg_buy_price = symbol_groups[symbol]['avg_buy_price']
+                    avg_sell_price = symbol_groups[symbol]['avg_sell_price']
+                    
+                    # Recalculate profit/loss based on average prices
+                    # We're still using the actual prices for P&L amount, but 
+                    # we're determining if it's a profit or loss based on average prices
+                    is_profit = avg_sell_price > avg_buy_price
+                    
+                    # Update the result based on average pricing
+                    trade_pairs[i]['Result'] = 'Profit' if is_profit else 'Loss'
+                    
+                    # If the trade was actually a loss but determined to be profit by average price (or vice versa),
+                    # we'll maintain the original P&L value but update the categorization
+                    
+            # Count profits and losses based on the updated Result field
+            profit_count = sum(1 for pair in trade_pairs if pair['Result'] == 'Profit')
+            loss_count = len(trade_pairs) - profit_count
+            
+            logger.info(f"After symbol-based average pricing: {profit_count} profits, {loss_count} losses")
+            
+            return trade_pairs
+                
+        except Exception as e:
+            logger.error(f"Error applying symbol-based pricing: {str(e)}")
+            logger.error(traceback.format_exc())
+            return trade_pairs
+    
     def apply_minute_based_pricing(self, trade_pairs):
         """
         Apply minute-based average pricing to trade pairs.
@@ -440,37 +770,50 @@ class WebullAnalytics:
                     avg_sell_price = (sell_df['SellPrice'] * sell_df['Quantity']).sum() / sell_df['Quantity'].sum()
                     sell_groups[(symbol, sell_minute)] = avg_sell_price
             
-            # Apply average prices to trade pairs
+            # Create symbol-minute pairs for determining profitability
+            symbol_minute_pairs = {}
+            
+            # Determine overall profitability for each symbol-minute pair
+            for (symbol, minute), avg_buy_price in buy_groups.items():
+                # Find matching sell minutes for this symbol
+                matching_sell_minutes = [m for (s, m) in sell_groups.keys() if s == symbol]
+                
+                # For each matching sell minute, check if it's profitable
+                for sell_minute in matching_sell_minutes:
+                    avg_sell_price = sell_groups.get((symbol, sell_minute))
+                    
+                    # Determine if this pair is profitable
+                    is_profit = avg_sell_price > avg_buy_price if avg_sell_price and avg_buy_price else None
+                    
+                    # Store the result
+                    key = f"{symbol}_{minute}_{sell_minute}"
+                    symbol_minute_pairs[key] = {
+                        'symbol': symbol,
+                        'buy_minute': minute,
+                        'sell_minute': sell_minute,
+                        'avg_buy_price': avg_buy_price,
+                        'avg_sell_price': avg_sell_price,
+                        'is_profit': is_profit
+                    }
+            
+            # Apply average prices to determine profitability, but keep original P&L values
             for i, pair in enumerate(trade_pairs):
                 symbol = pair['Symbol']
                 buy_minute = truncate_to_minute(pair['BuyTime'])
                 sell_minute = truncate_to_minute(pair['SellTime'])
                 
-                # Get average prices if available
-                if (symbol, buy_minute) in buy_groups:
-                    avg_buy_price = buy_groups[(symbol, buy_minute)]
-                    trade_pairs[i]['BuyPrice'] = avg_buy_price
-                    trade_pairs[i]['BuyCost'] = avg_buy_price * pair['Quantity']
-                    
-                if (symbol, sell_minute) in sell_groups:
-                    avg_sell_price = sell_groups[(symbol, sell_minute)]
-                    trade_pairs[i]['SellPrice'] = avg_sell_price
-                    trade_pairs[i]['SellProceeds'] = avg_sell_price * pair['Quantity']
+                # Create key to match with symbol_minute_pairs
+                key = f"{symbol}_{buy_minute}_{sell_minute}"
                 
-                # Recalculate P&L
-                buy_cost = trade_pairs[i]['BuyCost']
-                sell_proceeds = trade_pairs[i]['SellProceeds']
-                buy_commission = trade_pairs[i].get('BuyCommission', 0)
-                sell_commission = trade_pairs[i].get('SellCommission', 0)
-                
-                total_cost = buy_cost + buy_commission
-                total_proceeds = sell_proceeds - sell_commission
-                
-                # Update P&L values
-                trade_pairs[i]['PnL'] = total_proceeds - total_cost
-                trade_pairs[i]['PnLPercent'] = (trade_pairs[i]['PnL'] / total_cost) * 100 if total_cost > 0 else 0
-                trade_pairs[i]['Result'] = 'Profit' if trade_pairs[i]['PnL'] > 0 else 'Loss'
-                trade_pairs[i]['TotalCost'] = total_cost
+                if key in symbol_minute_pairs and symbol_minute_pairs[key]['is_profit'] is not None:
+                    # Update the result based on minute-based average pricing
+                    trade_pairs[i]['Result'] = 'Profit' if symbol_minute_pairs[key]['is_profit'] else 'Loss'
+            
+            # Count updated profits and losses
+            profit_count = sum(1 for pair in trade_pairs if pair['Result'] == 'Profit')
+            loss_count = len(trade_pairs) - profit_count
+            
+            logger.info(f"After minute-based pricing: {profit_count} profits, {loss_count} losses (original P&L values preserved)")
             
             return trade_pairs
                 
@@ -648,95 +991,131 @@ class WebullAnalytics:
             logger.error(f"Error loading trade tags: {str(e)}")
             return False
     
-    # Journal entry functionality
-    def add_journal_entry(self, date_str, entry):
+    # Journal entry functionality - integrated with journal database
+    def get_journal_entry_for_date(self, date_str=None):
         """
-        Add a journal entry for a specific date.
-        
-        Args:
-            date_str (str): Date string in format YYYY-MM-DD
-            entry (str): Journal entry text
-            
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        try:
-            # Use today if no date provided
-            if not date_str:
-                date_str = datetime.now().strftime("%Y-%m-%d")
-                
-            # Add entry with timestamp
-            timestamp = datetime.now().strftime("%H:%M:%S")
-            if date_str not in self.journal_entries:
-                self.journal_entries[date_str] = []
-                
-            self.journal_entries[date_str].append({
-                'timestamp': timestamp,
-                'entry': entry
-            })
-            
-            logger.info(f"Added journal entry for {date_str}")
-            
-            # Save journal
-            self.save_journal()
-            return True
-        except Exception as e:
-            logger.error(f"Error adding journal entry: {str(e)}")
-            return False
-            
-    def get_journal_entries(self, date_str=None):
-        """
-        Get journal entries for a specific date or all entries.
+        Get journal entry for a specific date using the journal database.
         
         Args:
             date_str (str, optional): Date string in format YYYY-MM-DD
             
         Returns:
-            list or dict: Entries for the specified date or all entries
-        """
-        if date_str:
-            return self.journal_entries.get(date_str, [])
-        return self.journal_entries
-        
-    def save_journal(self):
-        """
-        Save journal entries to file.
-        
-        Returns:
-            bool: True if successful, False otherwise
+            dict or None: Journal entry for the date or None if not found
         """
         try:
-            journal_file = os.path.join(OUTPUT_DIR, "trade_journal.pkl")
-            
-            with open(journal_file, 'wb') as f:
-                pickle.dump(self.journal_entries, f)
+            if not date_str:
+                date_str = datetime.now().strftime("%Y-%m-%d")
                 
-            logger.info(f"Saved journal with {len(self.journal_entries)} days of entries")
-            return True
-        except Exception as e:
-            logger.error(f"Error saving journal: {str(e)}")
-            return False
+            # Use the journal database to get the entry
+            entry = get_journal_entry(date_str)
             
-    def load_journal(self):
+            if entry:
+                logger.info(f"Retrieved journal entry for {date_str}")
+                return entry
+            else:
+                logger.info(f"No journal entry found for {date_str}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error getting journal entry: {str(e)}")
+            return None
+    
+    def save_journal_entry_for_date(self, date_str, entry, mood=3, lessons="", mistakes="", wins="", rating=3):
         """
-        Load journal entries from file.
+        Save a journal entry for a specific date using the journal database.
         
+        Args:
+            date_str (str): Date string in format YYYY-MM-DD
+            entry (str): Journal entry text
+            mood (int): Mood rating (1-5)
+            lessons (str): Lessons learned
+            mistakes (str): Mistakes made
+            wins (str): Wins/successes
+            rating (int): Overall day rating (1-5)
+            
         Returns:
             bool: True if successful, False otherwise
         """
         try:
-            journal_file = os.path.join(OUTPUT_DIR, "trade_journal.pkl")
+            if not date_str:
+                date_str = datetime.now().strftime("%Y-%m-%d")
+                
+            # Use the journal database to save the entry
+            success = save_journal_entry(
+                date=date_str,
+                entry=entry,
+                mood=mood,
+                lessons=lessons,
+                mistakes=mistakes,
+                wins=wins,
+                rating=rating
+            )
             
-            if os.path.exists(journal_file):
-                with open(journal_file, 'rb') as f:
-                    self.journal_entries = pickle.load(f)
-                    
-                logger.info(f"Loaded journal with {len(self.journal_entries)} days of entries")
+            if success:
+                logger.info(f"Saved journal entry for {date_str}")
                 return True
-            return False
+            else:
+                logger.error(f"Failed to save journal entry for {date_str}")
+                return False
+                
         except Exception as e:
-            logger.error(f"Error loading journal: {str(e)}")
+            logger.error(f"Error saving journal entry: {str(e)}")
             return False
+    
+    def get_trading_performance_with_journal(self, date_str):
+        """
+        Get trading performance metrics combined with journal entry for a specific date.
+        
+        Args:
+            date_str (str): Date string in format YYYY-MM-DD
+            
+        Returns:
+            dict: Combined trading and journal data
+        """
+        try:
+            # Get journal entry
+            journal_entry = self.get_journal_entry_for_date(date_str)
+            
+            # Get trading data for this date from history
+            trading_data = self.trade_history.get(date_str, [])
+            
+            # Calculate basic metrics for this date
+            day_metrics = {
+                'date': date_str,
+                'trades_count': len(trading_data),
+                'day_pnl': 0.0,
+                'profit_trades': 0,
+                'loss_trades': 0,
+                'profit_rate': 0.0
+            }
+            
+            if trading_data:
+                # If this is trade pairs data
+                if trading_data and 'PnL' in trading_data[0]:
+                    day_metrics['day_pnl'] = sum(trade['PnL'] for trade in trading_data)
+                    day_metrics['profit_trades'] = sum(1 for trade in trading_data if trade.get('PnL', 0) > 0)
+                    day_metrics['loss_trades'] = sum(1 for trade in trading_data if trade.get('PnL', 0) < 0)
+                    if day_metrics['trades_count'] > 0:
+                        day_metrics['profit_rate'] = (day_metrics['profit_trades'] / day_metrics['trades_count']) * 100
+            
+            # Combine trading and journal data
+            combined_data = {
+                'trading': day_metrics,
+                'journal': journal_entry,
+                'has_journal': journal_entry is not None,
+                'has_trades': len(trading_data) > 0
+            }
+            
+            return combined_data
+            
+        except Exception as e:
+            logger.error(f"Error getting combined performance data: {str(e)}")
+            return {
+                'trading': {'date': date_str, 'trades_count': 0, 'day_pnl': 0.0, 'profit_trades': 0, 'loss_trades': 0, 'profit_rate': 0.0},
+                'journal': None,
+                'has_journal': False,
+                'has_trades': False
+            }
             
     def load_historical_trades(self):
         """
@@ -754,9 +1133,8 @@ class WebullAnalytics:
                     
                 logger.info(f"Loaded trade history with {len(self.trade_history)} trading days")
                 
-            # Load trade tags and journal
+            # Load trade tags
             self.load_trade_tags()
-            self.load_journal()
                 
             return True
             
@@ -789,9 +1167,8 @@ class WebullAnalytics:
                 
             logger.info(f"Saved trade history with {len(self.trade_history)} trading days")
             
-            # Save trade tags and journal
+            # Save trade tags
             self.save_trade_tags()
-            self.save_journal()
             
             return True
             
@@ -955,9 +1332,9 @@ class WebullAnalytics:
             return stats
 
 # Version and metadata
-VERSION = "1.3"
+VERSION = "1.6"
 CREATED_DATE = "2025-05-06 15:30:00"
-LAST_MODIFIED = "2025-05-10 16:30:00"
+LAST_MODIFIED = "2025-05-24 12:00:00"
 
 # Module signature
 def get_version_info():
@@ -969,7 +1346,7 @@ def get_version_info():
         "modified": LAST_MODIFIED
     }
 
-# Webull Realtime P&L Monitor - Analytics Module - v1.3
+# Webull Realtime P&L Monitor - Analytics Module - v1.6
 # Created: 2025-05-06 15:30:00
-# Last Modified: 2025-05-10 16:30:00
+# Last Modified: 2025-05-24 12:00:00
 # webull_realtime_analytics.py

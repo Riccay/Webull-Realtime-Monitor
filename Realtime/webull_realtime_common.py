@@ -1,7 +1,7 @@
 """
-Webull Realtime P&L Monitor - Common Module - v1.2
+Webull Realtime P&L Monitor - Common Module - v1.3
 Created: 2025-05-06 14:00:00
-Last Modified: 2025-05-09 23:45:00
+Last Modified: 2025-05-21 23:50:00
 
 This module provides common utilities, constants, and functions
 used across the Webull Realtime P&L Monitor application.
@@ -180,6 +180,38 @@ def truncate_to_minute(datetime_str):
         logger.error(f"Error truncating to minute: {str(e)}")
         return datetime_str
 
+def truncate_to_timeframe(datetime_str, timeframe_minutes=5):
+    """
+    Truncate a datetime string to the specified time frame.
+    
+    Args:
+        datetime_str (str): Datetime string in format "MM/DD/YYYY HH:MM:SS"
+        timeframe_minutes (int): Size of time frame in minutes
+        
+    Returns:
+        str: Datetime string truncated to time frame
+    """
+    try:
+        dt = datetime.strptime(datetime_str, "%m/%d/%Y %H:%M:%S")
+        
+        # Calculate minutes since start of day
+        minutes_since_midnight = dt.hour * 60 + dt.minute
+        
+        # Calculate which timeframe this falls into
+        timeframe_index = minutes_since_midnight // timeframe_minutes
+        
+        # Calculate new minute and hour
+        new_minutes = (timeframe_index * timeframe_minutes) % 60
+        new_hour = (timeframe_index * timeframe_minutes) // 60
+        
+        # Create new datetime with truncated minutes
+        truncated_dt = dt.replace(hour=new_hour, minute=new_minutes, second=0)
+        
+        return truncated_dt.strftime("%m/%d/%Y %H:%M:%S")
+    except Exception as e:
+        logger.error(f"Error truncating to timeframe: {str(e)}")
+        return datetime_str
+
 # Webull log folder detection
 def detect_webull_log_folder():
     """Try to automatically detect the Webull log folder."""
@@ -201,9 +233,9 @@ def detect_webull_log_folder():
     return ""
 
 # Version and metadata
-VERSION = "1.2"
+VERSION = "1.3"
 CREATED_DATE = "2025-05-06 14:00:00"
-LAST_MODIFIED = "2025-05-09 23:45:00"
+LAST_MODIFIED = "2025-05-21 23:50:00"
 
 # Module signature
 def get_version_info():
@@ -215,7 +247,6 @@ def get_version_info():
         "modified": LAST_MODIFIED
     }
 
-# Webull Realtime P&L Monitor - Common Module - v1.2
+# Webull Realtime P&L Monitor - Common Module - v1.3
 # Created: 2025-05-06 14:00:00
-# Last Modified: 2025-05-09 23:45:00
-# webull_realtime_common.py
+# Last Modified: 2025-05-21 23:50:00

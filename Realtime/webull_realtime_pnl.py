@@ -1,11 +1,11 @@
 """
-Webull Realtime P&L Monitor - Main Application Module - v1.5
+Webull Realtime P&L Monitor - Main Application Module - v1.7
 Created: 2025-05-06 17:00:00
-Last Modified: 2025-05-09 23:45:00
+Last Modified: 2025-05-24 12:00:00
 
 This is the main application module that coordinates all components of the
 Webull Realtime P&L Monitor. It ties together the log parser, analytics,
-configuration, and GUI components.
+configuration, GUI components, and journal functionality.
 """
 
 import os
@@ -15,7 +15,16 @@ import logging
 import traceback
 import threading
 import tkinter as tk
+from tkinter import messagebox
 from datetime import datetime
+
+# Import journal modules - look in parent directory
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from journal_db import init_journal_db
+from journal_integration import auto_import_journal_entries
 
 # Import component modules
 from webull_realtime_common import logger
@@ -33,9 +42,9 @@ class WebullRealtimePnL:
     def __init__(self):
         """Initialize the Webull Realtime P&L Monitor application."""
         # Version info
-        self.version = "1.5"
+        self.version = "1.7"
         self.created_date = "2025-05-06 17:00:00"
-        self.modified_date = "2025-05-09 23:45:00"
+        self.modified_date = "2025-05-24 12:00:00"
         
         # Initialize components
         self.config = WebullConfig()
@@ -45,6 +54,9 @@ class WebullRealtimePnL:
         self.config.config['Settings']['created_date'] = self.created_date
         self.config.config['Settings']['modified_date'] = self.modified_date
         self.config.save_config()
+        
+        # Initialize journal system
+        self.initialize_journal_system()
         
         # Initialize components with config
         self.log_parser = WebullLogParser(log_folder=self.config.log_folder)
@@ -63,6 +75,26 @@ class WebullRealtimePnL:
         
         # GUI reference
         self.gui = None
+        
+    def initialize_journal_system(self):
+        """Initialize the journal database and auto-import entries."""
+        try:
+            logger.info("Initializing journal system...")
+            
+            # Initialize the journal database
+            if init_journal_db():
+                logger.info("Journal database initialized successfully")
+            else:
+                logger.warning("Failed to initialize journal database")
+            
+            # Auto-import any pending journal entries
+            imported_count = auto_import_journal_entries()
+            if imported_count > 0:
+                logger.info(f"Auto-imported {imported_count} journal entry files")
+                
+        except Exception as e:
+            logger.error(f"Error initializing journal system: {str(e)}")
+            logger.error(traceback.format_exc())
         
     def initialize_gui(self):
         """Initialize and configure the GUI."""
@@ -131,14 +163,26 @@ class WebullRealtimePnL:
                             # Calculate P&L
                             day_pnl = self.analytics.calculate_pnl(self.trades)
                             
-                            # Match trade pairs
+                            # Match trade pairs using FIFO
                             original_trade_pairs = self.log_parser.match_buy_sell_trades(self.trades)
                             
-                            # If minute-based averaging is enabled, use it to create enhanced trade pairs
-                            if self.config.minute_based_avg:
-                                logger.info("Using minute-based price averaging for P&L calculation")
-                                self.trade_pairs = self.analytics.apply_minute_based_pricing(original_trade_pairs)
+                            # Use the appropriate averaging method based on configuration
+                            if self.config.use_average_pricing:
+                                logger.info(f"Using time-based average pricing with {self.config.timeframe_minutes} minute timeframe")
+                                if self.config.timeframe_minutes <= 1:
+                                    # If timeframe is 1 minute, use minute-based pricing
+                                    logger.info("Using minute-based pricing")
+                                    self.trade_pairs = self.analytics.apply_minute_based_pricing(original_trade_pairs)
+                                else:
+                                    # Otherwise use the configured time frame
+                                    logger.info(f"Using {self.config.timeframe_minutes}-minute timeframe pricing")
+                                    self.trade_pairs = self.analytics.apply_timeframe_based_pricing(
+                                        original_trade_pairs, 
+                                        self.config.timeframe_minutes
+                                    )
                             else:
+                                # Use original FIFO trade pairs
+                                logger.info("Using standard FIFO trade matching without average pricing")
                                 self.trade_pairs = original_trade_pairs
                             
                             # Calculate advanced metrics from trade pairs
@@ -345,7 +389,7 @@ def main():
 if __name__ == "__main__":
     sys.exit(main())
 
-# Webull Realtime P&L Monitor - Main Application Module - v1.5
+# Webull Realtime P&L Monitor - Main Application Module - v1.7
 # Created: 2025-05-06 17:00:00
-# Last Modified: 2025-05-09 23:45:00
+# Last Modified: 2025-05-24 12:00:00
 # webull_realtime_pnl.py

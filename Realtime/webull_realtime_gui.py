@@ -1,10 +1,10 @@
 """
-Webull Realtime P&L Monitor - GUI Module - v2.0
+Webull Realtime P&L Monitor - GUI Module - v2.1
 Created: 2025-05-06 16:00:00
-Last Modified: 2025-05-10 17:30:00
+Last Modified: 2025-05-24 12:00:00
 
 This module provides the core graphical user interface for the Webull Realtime P&L Monitor.
-It creates and manages the main GUI components and their interactions.
+It creates and manages the main GUI components and their interactions, including journal functionality.
 """
 
 import os
@@ -35,9 +35,9 @@ class WebullGUI:
             on_close_callback: Callback function when window closes
         """
         # Version info
-        self.version = "2.0"
+        self.version = "2.1"
         self.created_date = "2025-05-06 16:00:00"
-        self.modified_date = "2025-05-10 17:30:00"
+        self.modified_date = "2025-05-24 12:00:00"
         
         self.config = config
         self.log_parser = log_parser
@@ -80,6 +80,7 @@ class WebullGUI:
         self.start_button = None
         self.stop_button = None
         self.export_button = None
+        self.journal_button = None  # New journal button
         self.header_last_scan_label = None  # New label for last scan in header
         
         # GUI components manager
@@ -149,6 +150,21 @@ class WebullGUI:
                 background=self.config.primary_color
             )
             self.header_last_scan_label.pack(side=tk.LEFT, padx=(10, 0), fill=tk.X, expand=True)
+            
+            # Journal button in header
+            journal_button = tk.Button(
+                header_frame,
+                text="📝",
+                font=("Segoe UI", 10, "bold"),
+                background=self.config.primary_color,
+                foreground="white",
+                activebackground=self.config.primary_color,
+                activeforeground="white",
+                relief=tk.FLAT,
+                borderwidth=0,
+                command=self.show_journal_dialog
+            )
+            journal_button.pack(side=tk.RIGHT, padx=5)
             
             # Dark mode toggle button
             dark_mode_button = tk.Button(
@@ -369,6 +385,12 @@ class WebullGUI:
             self.stop_button.pack(side=tk.LEFT, padx=5)
             self.stop_button.config(state=tk.DISABLED)
             
+            # Journal button
+            self.journal_button = self.components.create_modern_button(
+                self.button_frame, "Journal", self.show_journal_dialog, width=8
+            )
+            self.journal_button.pack(side=tk.LEFT, padx=5)
+            
             # Export button
             self.export_button = self.components.create_modern_button(
                 self.button_frame, "Export", self.save_trade_data, width=8
@@ -388,7 +410,7 @@ class WebullGUI:
             # Apply theme
             self.apply_theme()
             
-            logger.info("GUI initialized")
+            logger.info("GUI initialized with journal integration")
             
             return self.root
             
@@ -509,6 +531,8 @@ class WebullGUI:
         self.start_button.config(background=self.config.primary_color, foreground="white")
         self.stop_button.config(background=self.config.primary_color, foreground="white")
         self.export_button.config(background=self.config.primary_color, foreground="white")
+        if hasattr(self, 'journal_button') and self.journal_button:
+            self.journal_button.config(background=self.config.primary_color, foreground="white")
         
         # Update header last scan label
         if hasattr(self, 'header_last_scan_label') and self.header_last_scan_label:
@@ -554,6 +578,10 @@ class WebullGUI:
     def show_settings_dialog(self):
         """Display settings dialog."""
         self.components.show_settings_dialog()
+    
+    def show_journal_dialog(self):
+        """Display journal dialog."""
+        self.components.show_journal_dialog()
     
     def browse_log_folder(self):
         """Open dialog to select log folder."""
@@ -782,27 +810,28 @@ class WebullGUI:
             tools_menu.add_command(label="Reset Data", command=self.components.reset_data)
             tools_menu.add_command(label="Browse Log Folder", command=self.components.browse_log_folder)
             
-            # Trade menu
-            trade_menu = tk.Menu(menubar, tearoff=0)
-            menubar.add_cascade(label="Trading", menu=trade_menu)
-            trade_menu.add_command(label="Tag Trades", command=lambda: self.components.show_trade_tagging_dialog(self.trades, self.trade_pairs))
-            trade_menu.add_command(label="Trading Journal", command=self.components.show_journal_dialog)
+            # Trading menu with journal integration
+            trading_menu = tk.Menu(menubar, tearoff=0)
+            menubar.add_cascade(label="Trading", menu=trading_menu)
+            trading_menu.add_command(label="Trading Journal", command=self.show_journal_dialog)
+            trading_menu.add_separator()
+            trading_menu.add_command(label="Tag Trades", command=lambda: self.components.show_trade_tagging_dialog(self.trades, self.trade_pairs))
             
             # Help menu
             help_menu = tk.Menu(menubar, tearoff=0)
             menubar.add_cascade(label="Help", menu=help_menu)
             help_menu.add_command(label="About", command=self.components.show_info_dialog)
             
-            logger.info("Menu bar added")
+            logger.info("Menu bar added with journal integration")
             
         except Exception as e:
             logger.error(f"Error adding menu bar: {str(e)}")
             logger.error(traceback.format_exc())
 
 # Version and metadata
-VERSION = "2.0"
+VERSION = "2.1"
 CREATED_DATE = "2025-05-06 16:00:00"
-LAST_MODIFIED = "2025-05-10 17:30:00"
+LAST_MODIFIED = "2025-05-24 12:00:00"
 
 # Module signature
 def get_version_info():
@@ -814,7 +843,7 @@ def get_version_info():
         "modified": LAST_MODIFIED
     }
 
-# Webull Realtime P&L Monitor - GUI Module - v2.0
+# Webull Realtime P&L Monitor - GUI Module - v2.1
 # Created: 2025-05-06 16:00:00
-# Last Modified: 2025-05-10 17:30:00
+# Last Modified: 2025-05-24 12:00:00
 # webull_realtime_gui.py
