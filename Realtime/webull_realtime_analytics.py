@@ -18,12 +18,8 @@ from datetime import datetime, date, timedelta
 # Import from common module
 from webull_realtime_common import logger, OUTPUT_DIR, truncate_to_minute, truncate_to_timeframe
 
-# Import journal functionality - look in parent directory
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from journal_db import get_journal_entry, save_journal_entry
+# Import journal functionality using the helper
+from journal_import_helper import get_journal_entry, save_journal_entry
 
 class WebullAnalytics:
     """Analytics engine for Webull Realtime P&L Monitor."""

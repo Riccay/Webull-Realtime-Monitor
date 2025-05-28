@@ -24,13 +24,8 @@ import configparser
 # Import from common module
 from webull_realtime_common import logger, TRADES_DIR, CONFIG_FILE
 
-# Import journal functionality - look in parent directory
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from journal_db import save_journal_entry, get_journal_entry
-from journal_integration import get_journal_export_script
+# Import journal functionality using the helper
+from journal_import_helper import save_journal_entry, get_journal_entry, get_journal_export_script
 
 class ToolTip:
     """

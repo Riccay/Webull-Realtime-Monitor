@@ -18,13 +18,8 @@ import tkinter as tk
 from tkinter import messagebox
 from datetime import datetime
 
-# Import journal modules - look in parent directory
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from journal_db import init_journal_db
-from journal_integration import auto_import_journal_entries
+# Import journal modules using the helper
+from journal_import_helper import init_journal_db, auto_import_journal_entries
 
 # Import component modules
 from webull_realtime_common import logger
@@ -80,6 +75,11 @@ class WebullRealtimePnL:
         """Initialize the journal database and auto-import entries."""
         try:
             logger.info("Initializing journal system...")
+            
+            # Check if journal functions are available (not stubs)
+            if hasattr(init_journal_db, '__self__') and init_journal_db.__self__.__class__.__name__ == 'JournalStub':
+                logger.warning("Journal system not available - using stub implementation")
+                return
             
             # Initialize the journal database
             if init_journal_db():
