@@ -1,7 +1,7 @@
 """
-Webull Realtime P&L Monitor - Configuration Module - v2.2
+Webull Realtime P&L Monitor - Configuration Module - v2.3
 Created: 2025-05-06 15:00:00
-Last Modified: 2025-05-23 08:15:00
+Last Modified: 2025-05-28 14:30:00
 
 This module handles configuration management for the Webull Realtime P&L Monitor.
 It provides functions for loading, saving, and managing application settings.
@@ -25,9 +25,9 @@ class WebullConfig:
     def __init__(self):
         """Initialize the configuration manager."""
         # Version info
-        self.version = "2.2"
+        self.version = "2.3"
         self.created_date = "2025-05-06 15:00:00"
-        self.modified_date = "2025-05-23 08:15:00"
+        self.modified_date = "2025-05-28 08:30:00"
         
         # Create config parser
         self.config = configparser.ConfigParser()
@@ -45,6 +45,7 @@ class WebullConfig:
         self.minute_based_avg = self._str_to_bool(self.config.get('Settings', 'minute_based_avg', fallback='True'))
         self.use_average_pricing = self._str_to_bool(self.config.get('Settings', 'use_average_pricing', fallback='True'))
         self.timeframe_minutes = self.config.getint('Settings', 'timeframe_minutes', fallback=5)
+        self.backup_rotation_count = self.config.getint('Settings', 'backup_rotation_count', fallback=50)
         
         # Log loaded values immediately after loading
         logger.info(f"STARTUP - Settings loaded directly from {CONFIG_FILE}:")
@@ -150,6 +151,7 @@ class WebullConfig:
             'minute_based_avg': 'True',
             'use_average_pricing': 'True',  # Default to using average pricing
             'timeframe_minutes': '5',  # Default time frame in minutes
+            'backup_rotation_count': '50',  # Default number of journal backups to keep
             'version': self.version,
             'created_date': self.created_date,
             'modified_date': self.modified_date
@@ -221,6 +223,7 @@ class WebullConfig:
             'minute_based_avg': 'True',
             'use_average_pricing': 'True',
             'timeframe_minutes': '5',
+            'backup_rotation_count': '50',
             'version': self.version,
             'created_date': self.created_date,
             'modified_date': self.modified_date
@@ -306,6 +309,8 @@ class WebullConfig:
                 self.use_average_pricing = True
             if not hasattr(self, 'timeframe_minutes'):
                 self.timeframe_minutes = 5
+            if not hasattr(self, 'backup_rotation_count'):
+                self.backup_rotation_count = 50
                 
             # Update config with current values
             self.config['Settings']['scan_interval'] = str(self.scan_interval)
@@ -316,6 +321,7 @@ class WebullConfig:
             self.config['Settings']['minute_based_avg'] = str(self.minute_based_avg)
             self.config['Settings']['use_average_pricing'] = str(self.use_average_pricing)
             self.config['Settings']['timeframe_minutes'] = str(self.timeframe_minutes)
+            self.config['Settings']['backup_rotation_count'] = str(self.backup_rotation_count)
             self.config['Settings']['version'] = self.version
             self.config['Settings']['created_date'] = self.created_date
             self.config['Settings']['modified_date'] = self.modified_date
@@ -688,6 +694,17 @@ class WebullConfig:
                     logger.warning(f"Error: {str(e)}")
                     # Keep the current value
             
+            if 'backup_rotation_count' in settings_dict:
+                # Ensure it's within valid range (5-500 backups)
+                try:
+                    backup_count = int(settings_dict['backup_rotation_count'])
+                    self.backup_rotation_count = max(5, min(500, backup_count))
+                    logger.info(f"Set backup_rotation_count to {self.backup_rotation_count}")
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Invalid backup_rotation_count value: {settings_dict['backup_rotation_count']}")
+                    logger.warning(f"Error: {str(e)}")
+                    # Keep the current value
+            
             # Log the updated settings
             logger.info(f"Settings updated - auto_start: {self.auto_start}, use_average_pricing: {self.use_average_pricing}, timeframe_minutes: {self.timeframe_minutes}")
             
@@ -721,9 +738,9 @@ def get_version_info():
     """Return version information for this module."""
     return {
         "module": "webull_realtime_config",
-        "version": "2.2",
+        "version": "2.3",
         "created": "2025-05-06 15:00:00",
-        "modified": "2025-05-23 08:15:00"
+        "modified": "2025-05-28 08:30:00"
     }
 
 # Webull Realtime P&L Monitor - Configuration Module - v2.2

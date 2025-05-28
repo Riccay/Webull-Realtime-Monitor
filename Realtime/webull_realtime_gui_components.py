@@ -1,7 +1,7 @@
 """
-Webull Realtime P&L Monitor - GUI Components Module - v2.8
+Webull Realtime P&L Monitor - GUI Components Module - v2.9
 Created: 2025-05-07 10:45:00
-Last Modified: 2025-05-24 12:00:00
+Last Modified: 2025-05-28 14:30:00
 
 This module provides specialized GUI components for the Webull Realtime P&L Monitor.
 It handles dialogs, charts, and other complex UI elements including journal functionality.
@@ -859,7 +859,8 @@ Use Average Pricing: {"Enabled" if self.config.use_average_pricing else "Disable
                 'dark_mode': tk.BooleanVar(value=self.config.dark_mode),
                 'use_average_pricing': tk.BooleanVar(value=self.config.use_average_pricing),
                 'minute_based_avg': tk.BooleanVar(value=self.config.minute_based_avg),
-                'timeframe_minutes': tk.IntVar(value=self.config.timeframe_minutes)
+                'timeframe_minutes': tk.IntVar(value=self.config.timeframe_minutes),
+                'backup_rotation_count': tk.IntVar(value=self.config.backup_rotation_count)
             }
             
             # Create tabs in the content area
@@ -967,6 +968,14 @@ Use Average Pricing: {"Enabled" if self.config.use_average_pricing else "Disable
             selectcolor=self.config.background_color if self.config.dark_mode else None
         )
         minimize_tray_check.grid(row=3, column=0, columnspan=2, sticky=tk.W, padx=5, pady=5)
+        
+        # Backup rotation count
+        tk.Label(general_tab, text="Journal backup retention:", background=self.config.background_color, foreground=self.config.text_color).grid(row=4, column=0, sticky=tk.W, padx=5, pady=5)
+        
+        backup_count_entry = tk.Entry(general_tab, textvariable=settings_vars['backup_rotation_count'], width=5)
+        backup_count_entry.grid(row=4, column=1, sticky=tk.W, padx=5, pady=5)
+        
+        tk.Label(general_tab, text="backups (5-500)", background=self.config.background_color, foreground=self.config.text_color).grid(row=4, column=2, sticky=tk.W, padx=5, pady=5)
         
         return general_tab
     
@@ -1992,11 +2001,11 @@ Use Average Pricing: {"Enabled" if self.config.use_average_pricing else "Disable
             info_frame.pack(fill=tk.X, pady=(0, 10))
             
             # Get backup status
-            backup_manager = get_backup_manager()
+            backup_manager = get_backup_manager(self.config)
             if backup_manager:
                 status = backup_manager.get_backup_status()
                 
-                info_text = f"Backup Count: {status['backup_count']} / {backup_manager.BACKUP_ROTATION_COUNT}\n"
+                info_text = f"Backup Count: {status['backup_count']} / {backup_manager.backup_rotation_count}\n"
                 info_text += f"Total Size: {status['total_size_mb']} MB\n"
                 info_text += f"Backup Directory: {status['backup_directory']}\n"
                 
@@ -2108,7 +2117,7 @@ Use Average Pricing: {"Enabled" if self.config.use_average_pricing else "Disable
             parent_window: Parent window to refresh after backup
         """
         try:
-            backup_manager = get_backup_manager()
+            backup_manager = get_backup_manager(self.config)
             if not backup_manager:
                 messagebox.showerror("Error", "Backup manager not available")
                 return
@@ -2163,7 +2172,7 @@ Use Average Pricing: {"Enabled" if self.config.use_average_pricing else "Disable
             )
             
             if result:
-                backup_manager = get_backup_manager()
+                backup_manager = get_backup_manager(self.config)
                 if not backup_manager:
                     messagebox.showerror("Error", "Backup manager not available")
                     return

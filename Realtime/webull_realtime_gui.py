@@ -1,7 +1,7 @@
 """
-Webull Realtime P&L Monitor - GUI Module - v2.1
+Webull Realtime P&L Monitor - GUI Module - v2.2
 Created: 2025-05-06 16:00:00
-Last Modified: 2025-05-24 12:00:00
+Last Modified: 2025-05-28 14:30:00
 
 This module provides the core graphical user interface for the Webull Realtime P&L Monitor.
 It creates and manages the main GUI components and their interactions, including journal functionality.
@@ -106,7 +106,7 @@ class WebullGUI:
         try:
             # Create main window
             self.root = tk.Tk()
-            self.root.title("Webull Realtime P&L Monitor")
+            self.root.title("Webull Realtime P&L Monitor v2.2")
             self.root.geometry("600x650")
             self.root.minsize(600, 650)
             self.root.configure(background=self.config.background_color)

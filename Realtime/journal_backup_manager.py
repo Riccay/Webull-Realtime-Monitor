@@ -1,7 +1,8 @@
 """
-Journal Backup Manager - Handles automatic backups and rotation of journal database
+Journal Backup Manager - v1.1
+Handles automatic backups and rotation of journal database
 Created: 2025-05-28
-Last Modified: 2025-05-28
+Last Modified: 2025-05-28 14:30:00
 
 This module provides robust backup functionality for the trading journal database
 to prevent data loss from corruption or accidental deletion.
@@ -21,19 +22,31 @@ from webull_realtime_common import logger, OUTPUT_DIR
 
 # Backup configuration
 BACKUP_DIR = os.path.join(OUTPUT_DIR, 'backups', 'journal')
-BACKUP_ROTATION_COUNT = 10  # Number of backups to keep
+DEFAULT_BACKUP_ROTATION_COUNT = 50  # Default number of backups to keep
 JOURNAL_DB_NAME = 'trading_journal.db'
 JOURNAL_DB_PATH = os.path.join(OUTPUT_DIR, JOURNAL_DB_NAME)
 
 class JournalBackupManager:
     """Manages automatic backups and restoration of the journal database."""
     
-    def __init__(self):
-        """Initialize the backup manager."""
+    def __init__(self, config=None):
+        """Initialize the backup manager.
+        
+        Args:
+            config: WebullConfig instance (optional)
+        """
         self.backup_dir = BACKUP_DIR
+        self.config = config
+        
+        # Get rotation count from config or use default
+        if config and hasattr(config, 'backup_rotation_count'):
+            self.backup_rotation_count = config.backup_rotation_count
+        else:
+            self.backup_rotation_count = DEFAULT_BACKUP_ROTATION_COUNT
+            
         self.ensure_backup_directory()
         self.last_backup_time = None
-        logger.info(f"Journal backup manager initialized. Backup directory: {self.backup_dir}")
+        logger.info(f"Journal backup manager initialized. Backup directory: {self.backup_dir}, Rotation count: {self.backup_rotation_count}")
     
     def ensure_backup_directory(self):
         """Ensure the backup directory exists."""
@@ -145,8 +158,8 @@ class JournalBackupManager:
             backup_files.sort(key=lambda x: x[1], reverse=True)
             
             # Keep only the most recent backups
-            if len(backup_files) > BACKUP_ROTATION_COUNT:
-                files_to_remove = backup_files[BACKUP_ROTATION_COUNT:]
+            if len(backup_files) > self.backup_rotation_count:
+                files_to_remove = backup_files[self.backup_rotation_count:]
                 
                 for filepath, _ in files_to_remove:
                     try:
@@ -155,7 +168,7 @@ class JournalBackupManager:
                     except Exception as e:
                         logger.error(f"Failed to remove old backup {filepath}: {str(e)}")
             
-            logger.debug(f"Backup rotation complete. {len(backup_files[:BACKUP_ROTATION_COUNT])} backups retained")
+            logger.debug(f"Backup rotation complete. {min(len(backup_files), self.backup_rotation_count)} backups retained")
             
         except Exception as e:
             logger.error(f"Error rotating backups: {str(e)}")
@@ -313,11 +326,20 @@ class JournalBackupManager:
 # Global instance
 backup_manager = None
 
-def get_backup_manager():
-    """Get or create the global backup manager instance."""
+def get_backup_manager(config=None):
+    """Get or create the global backup manager instance.
+    
+    Args:
+        config: WebullConfig instance (optional)
+    """
     global backup_manager
     if backup_manager is None:
-        backup_manager = JournalBackupManager()
+        backup_manager = JournalBackupManager(config)
+    elif config and backup_manager.config is None:
+        # Update config if not already set
+        backup_manager.config = config
+        if hasattr(config, 'backup_rotation_count'):
+            backup_manager.backup_rotation_count = config.backup_rotation_count
     return backup_manager
 
 # Convenience functions

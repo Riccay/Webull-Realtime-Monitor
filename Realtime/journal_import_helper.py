@@ -73,7 +73,7 @@ except ImportError as e:
     def get_journal_backups():
         logger.warning("Get backups skipped - backup manager not available")
         return []
-    def get_backup_manager():
+    def get_backup_manager(config=None):
         return None
 
 # Stub implementations as fallback if imports fail
