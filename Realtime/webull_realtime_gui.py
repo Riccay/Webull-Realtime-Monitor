@@ -106,7 +106,7 @@ class WebullGUI:
         try:
             # Create main window
             self.root = tk.Tk()
-            self.root.title("Webull Realtime P&L Monitor v2.2")
+            self.root.title("Webull Realtime P&L Monitor")
             self.root.geometry("600x650")
             self.root.minsize(600, 650)
             self.root.configure(background=self.config.background_color)
